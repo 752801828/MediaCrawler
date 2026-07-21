@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from creator_ops.domain import AccountProfile, Platform
+from creator_ops.platforms.base import parse_metric_number
+from creator_ops.platforms.douyin_creator import (
+    DouyinCreatorCollector,
+    normalize_douyin_row,
+)
+from creator_ops.platforms.xhs_creator import XhsCreatorCollector, normalize_xhs_row
+
+
+def profile(platform: Platform) -> AccountProfile:
+    return AccountProfile(
+        platform=platform,
+        template="%s_use_data_dir",
+        path=Path("D:/browser_data") / f"{platform.value}_use_data_dir",
+        is_main=True,
+        is_water=False,
+    )
+
+
+def test_parse_metric_number_handles_chinese_units_and_percentages():
+    assert parse_metric_number("1.2万") == 12000
+    assert parse_metric_number("3.5亿") == 350000000
+    assert parse_metric_number("12.5%") == 12.5
+    assert parse_metric_number("--") == 0
+    assert parse_metric_number("00:13") == "00:13"
+
+
+def test_normalize_xhs_row_converts_metrics_and_builds_stable_key():
+    record = normalize_xhs_row(
+        profile_key="%s_use_data_dir",
+        row={
+            "标题": "示例笔记",
+            "创建时间": "2026-07-20 10:00",
+            "曝光": "1.2万",
+            "点赞": "23",
+        },
+        snapshot_date=date(2026, 7, 21),
+    )
+
+    assert record.platform is Platform.XHS
+    assert record.metrics == {"曝光": 12000, "点赞": 23}
+    assert record.content_key == normalize_xhs_row(
+        "%s_use_data_dir",
+        {"标题": "示例笔记", "创建时间": "2026-07-20 10:00"},
+        date(2026, 7, 21),
+    ).content_key
+
+
+def test_normalize_douyin_row_converts_percentages():
+    record = normalize_douyin_row(
+        profile_key="%s_use_data_dir",
+        row={
+            "标题": "示例视频",
+            "创建时间": "2026-07-20 11:30",
+            "浏览": "2.5万",
+            "完播率": "31.2%",
+        },
+        snapshot_date=date(2026, 7, 21),
+    )
+
+    assert record.platform is Platform.DOUYIN
+    assert record.metrics["浏览"] == 25000
+    assert record.metrics["完播率"] == 31.2
+
+
+@pytest.mark.asyncio
+async def test_collectors_accept_injected_row_sources():
+    async def xhs_rows(_profile):
+        yield [{"标题": "笔记", "创建时间": "2026-07-20", "浏览": "10"}]
+
+    async def douyin_rows(_profile):
+        yield [{"标题": "视频", "创建时间": "2026-07-20", "浏览": "20"}]
+
+    xhs_records = await XhsCreatorCollector(row_source=xhs_rows).collect(
+        profile(Platform.XHS), snapshot_date=date(2026, 7, 21)
+    )
+    douyin_records = await DouyinCreatorCollector(row_source=douyin_rows).collect(
+        profile(Platform.DOUYIN), snapshot_date=date(2026, 7, 21)
+    )
+
+    assert [record.title for record in xhs_records] == ["笔记"]
+    assert [record.title for record in douyin_records] == ["视频"]
