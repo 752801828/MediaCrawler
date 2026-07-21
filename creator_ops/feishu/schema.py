@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+ACCOUNT_FIELDS = {
+    "id": "ID",
+    "platform": "平台",
+    "main": "主账号",
+    "water": "水号",
+}
+
+LINK_FIELDS = {
+    "platform": "平台",
+    "target": "标识",
+    "get_comments": "是否查询评论",
+}
+
+USER_FIELDS = {
+    "platform": "平台",
+    "target": "标识",
+}
+
+PLATFORM_LABELS = {
+    "小红书": "xhs",
+    "抖音": "dy",
+}
+
+PRIVACY_RESTRICTED_COMMENT_FIELDS = frozenset(
+    {
+        "user_id",
+        "sec_uid",
+        "short_user_id",
+        "user_unique_id",
+        "avatar",
+        "ip_location",
+        "user_signature",
+    }
+)
+
+XHS_STATS_FIELDS = (
+    "标题",
+    "创建时间",
+    "曝光",
+    "浏览",
+    "封面点击率",
+    "点赞",
+    "评论",
+    "收藏",
+    "涨粉",
+    "分享",
+    "人均观看时长",
+    "弹幕",
+)
+
+DOUYIN_STATS_FIELDS = (
+    "标题",
+    "创建时间",
+    "浏览",
+    "完播率",
+    "5S完播率",
+    "封面点击率",
+    "2S跳出率",
+    "人均观看时长",
+    "点赞",
+    "分享",
+    "评论",
+    "收藏",
+    "主页访问量",
+    "涨粉",
+)
