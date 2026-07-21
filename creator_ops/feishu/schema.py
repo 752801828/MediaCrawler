@@ -9,13 +9,16 @@ ACCOUNT_FIELDS = {
 
 LINK_FIELDS = {
     "platform": "平台",
-    "target": "标识",
+    "enabled": "是否查询",
+    "xhs_target": "链接",
+    "douyin_target": "ID",
     "get_comments": "是否查询评论",
 }
 
 USER_FIELDS = {
     "platform": "平台",
-    "target": "标识",
+    "enabled": "是否查询",
+    "target": "ID",
 }
 
 PLATFORM_LABELS = {
