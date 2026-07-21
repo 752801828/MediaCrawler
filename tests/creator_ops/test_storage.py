@@ -103,3 +103,30 @@ async def test_outbox_transitions_from_pending_to_synced(repository):
         row = await session.get(CreatorOpsSyncOutbox, outbox_id)
     assert row.status == "synced"
     assert row.synced_at is not None
+
+
+@pytest.mark.asyncio
+async def test_save_content_with_outbox_is_atomic(repository):
+    repo, session_maker = repository
+    record = MetricRecord(
+        platform=Platform.DOUYIN,
+        profile_key="%s_use_data_dir",
+        content_key="video-1",
+        title="Video",
+        published_at=datetime(2026, 7, 20, 10, 0),
+        snapshot_date=date(2026, 7, 21),
+        metrics={"浏览": 30},
+    )
+
+    snapshot_id, outbox_id = await repo.save_content_with_outbox(
+        record,
+        target_table="douyin_stats",
+        business_key="dy:%s_use_data_dir:video-1:2026-07-21",
+        payload={"标题": "Video", "浏览": 30},
+    )
+
+    async with session_maker() as session:
+        snapshot = await session.get(CreatorContentMetricSnapshot, snapshot_id)
+        outbox = await session.get(CreatorOpsSyncOutbox, outbox_id)
+    assert snapshot is not None
+    assert outbox.status == "pending"

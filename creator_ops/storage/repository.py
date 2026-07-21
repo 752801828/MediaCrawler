@@ -84,36 +84,25 @@ class CreatorOpsRepository:
 
     async def upsert_content_snapshot(self, record: MetricRecord) -> int:
         async with self.session_factory() as session:
-            row = await session.scalar(
-                select(CreatorContentMetricSnapshot).where(
-                    CreatorContentMetricSnapshot.platform == record.platform.value,
-                    CreatorContentMetricSnapshot.profile_key == record.profile_key,
-                    CreatorContentMetricSnapshot.content_key == record.content_key,
-                    CreatorContentMetricSnapshot.snapshot_date == record.snapshot_date,
-                )
+            return await _upsert_content_snapshot(session, record)
+
+    async def save_content_with_outbox(
+        self,
+        record: MetricRecord,
+        *,
+        target_table: str,
+        business_key: str,
+        payload: dict[str, Any],
+    ) -> tuple[int, int]:
+        async with self.session_factory() as session:
+            snapshot_id = await _upsert_content_snapshot(session, record)
+            outbox_id = await _enqueue_sync(
+                session,
+                target_table=target_table,
+                business_key=business_key,
+                payload=payload,
             )
-            now = datetime.now()
-            payload = _canonical_json(record.metrics)
-            if row is None:
-                row = CreatorContentMetricSnapshot(
-                    platform=record.platform.value,
-                    profile_key=record.profile_key,
-                    content_key=record.content_key,
-                    title=record.title,
-                    published_at=record.published_at,
-                    snapshot_date=record.snapshot_date,
-                    metrics_json=payload,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(row)
-            else:
-                row.title = record.title
-                row.published_at = record.published_at
-                row.metrics_json = payload
-                row.updated_at = now
-            await session.flush()
-            return int(row.id)
+            return snapshot_id, outbox_id
 
     async def upsert_account_snapshot(
         self,
@@ -195,32 +184,12 @@ class CreatorOpsRepository:
         payload: dict[str, Any],
     ) -> int:
         async with self.session_factory() as session:
-            row = await session.scalar(
-                select(CreatorOpsSyncOutbox).where(
-                    CreatorOpsSyncOutbox.target_table == target_table,
-                    CreatorOpsSyncOutbox.business_key == business_key,
-                )
+            return await _enqueue_sync(
+                session,
+                target_table=target_table,
+                business_key=business_key,
+                payload=payload,
             )
-            now = datetime.now()
-            serialized = _canonical_json(payload)
-            if row is None:
-                row = CreatorOpsSyncOutbox(
-                    target_table=target_table,
-                    business_key=business_key,
-                    payload_json=serialized,
-                    status="pending",
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(row)
-            elif row.payload_json != serialized:
-                row.payload_json = serialized
-                row.status = "pending"
-                row.last_error = ""
-                row.synced_at = None
-                row.updated_at = now
-            await session.flush()
-            return int(row.id)
 
     async def pending_sync(self, limit: int = 500) -> list[CreatorOpsSyncOutbox]:
         async with self.session_factory() as session:
@@ -252,6 +221,118 @@ class CreatorOpsRepository:
             row.last_error = error[:4000]
             row.updated_at = datetime.now()
 
+    async def list_comment_payloads(
+        self,
+        platform: str,
+        *,
+        limit: int = 5000,
+    ) -> list[dict[str, Any]]:
+        if platform == "xhs":
+            from database.models import XhsNoteComment as CommentModel
+
+            content_id_field = "note_id"
+        elif platform == "dy":
+            from database.models import DouyinAwemeComment as CommentModel
+
+            content_id_field = "aweme_id"
+        else:
+            raise ValueError(f"unsupported comment platform: {platform}")
+
+        async with self.session_factory() as session:
+            result = await session.scalars(
+                select(CommentModel).order_by(CommentModel.id).limit(limit)
+            )
+            payloads: list[dict[str, Any]] = []
+            for row in result:
+                payload = {
+                    "id": str(row.id),
+                    "creator_hash": getattr(row, "creator_hash", "") or "",
+                    "nickname": getattr(row, "nickname", "") or "",
+                    "add_ts": getattr(row, "add_ts", 0) or 0,
+                    "last_modify_ts": getattr(row, "last_modify_ts", 0) or 0,
+                    "comment_id": getattr(row, "comment_id", "") or "",
+                    "content": getattr(row, "content", "") or "",
+                    "create_time": getattr(row, "create_time", 0) or 0,
+                    "sub_comment_count": getattr(row, "sub_comment_count", 0) or 0,
+                    "parent_comment_id": getattr(row, "parent_comment_id", "") or "",
+                    "like_count": getattr(row, "like_count", 0) or 0,
+                    "pictures": getattr(row, "pictures", "") or "",
+                    content_id_field: getattr(row, content_id_field, "") or "",
+                }
+                payloads.append(payload)
+            return payloads
+
 
 def _canonical_json(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+async def _upsert_content_snapshot(
+    session: AsyncSession,
+    record: MetricRecord,
+) -> int:
+    row = await session.scalar(
+        select(CreatorContentMetricSnapshot).where(
+            CreatorContentMetricSnapshot.platform == record.platform.value,
+            CreatorContentMetricSnapshot.profile_key == record.profile_key,
+            CreatorContentMetricSnapshot.content_key == record.content_key,
+            CreatorContentMetricSnapshot.snapshot_date == record.snapshot_date,
+        )
+    )
+    now = datetime.now()
+    payload = _canonical_json(record.metrics)
+    if row is None:
+        row = CreatorContentMetricSnapshot(
+            platform=record.platform.value,
+            profile_key=record.profile_key,
+            content_key=record.content_key,
+            title=record.title,
+            published_at=record.published_at,
+            snapshot_date=record.snapshot_date,
+            metrics_json=payload,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+    else:
+        row.title = record.title
+        row.published_at = record.published_at
+        row.metrics_json = payload
+        row.updated_at = now
+    await session.flush()
+    return int(row.id)
+
+
+async def _enqueue_sync(
+    session: AsyncSession,
+    *,
+    target_table: str,
+    business_key: str,
+    payload: dict[str, Any],
+) -> int:
+    row = await session.scalar(
+        select(CreatorOpsSyncOutbox).where(
+            CreatorOpsSyncOutbox.target_table == target_table,
+            CreatorOpsSyncOutbox.business_key == business_key,
+        )
+    )
+    now = datetime.now()
+    serialized = _canonical_json(payload)
+    if row is None:
+        row = CreatorOpsSyncOutbox(
+            target_table=target_table,
+            business_key=business_key,
+            payload_json=serialized,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+    elif row.payload_json != serialized:
+        row.payload_json = serialized
+        row.status = "pending"
+        row.last_error = ""
+        row.synced_at = None
+        row.updated_at = now
+    await session.flush()
+    return int(row.id)
