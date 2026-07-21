@@ -121,6 +121,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.example
 .venv
 /env/
 venv/
@@ -165,6 +167,11 @@ cython_debug/
 /temp_image/
 /browser_data/
 /data/
+/runtime/creator_ops/
+/creator_ops_diagnostics/
+/.test_tmp/
+*cookies*.json
+*cookie_export*.txt
 
 */.DS_Store
 .vscode
