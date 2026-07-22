@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.11+, Typer, Playwright, Requests, SQLAlchemy async, MySQL/asyncmy, pytest, pytest-asyncio.
 
-**Implementation status (2026-07-22):** Tasks 1-9 are implemented and locally verified. Task 10 remains the fork-only publication step and must target `752801828/MediaCrawler`, never the upstream repository.
+**Implementation status (2026-07-22):** Tasks 1-10 are complete. The migration is published only to `752801828/MediaCrawler`; the upstream repository remains fetch-only.
 
 ---
 
