@@ -73,6 +73,24 @@ start_creator_ops.cmd
 
 飞书限流、超时或服务异常不会删除 MySQL 数据。恢复后执行 `sync-only` 即可补传。
 
+## 旧创作者历史迁移
+
+旧数据库中的 `xhs_creator_history` 和 `dy_creator_history` 可能包含外部博主个人资料。迁移命令只处理你明确列出的自有账号 ID，并且只导入关注数、粉丝数、互动数、作品数和日期；昵称、头像、IP、签名和描述不会导入。
+
+先执行 dry-run：
+
+```cmd
+.venv\Scripts\python.exe -m creator_ops migrate-legacy --owned-user-id 你的自有账号ID
+```
+
+确认 eligible 数量后写入：
+
+```cmd
+.venv\Scripts\python.exe -m creator_ops migrate-legacy --owned-user-id 你的自有账号ID --apply
+```
+
+多个自有账号需要重复传入 `--owned-user-id`。不要把外部博主 ID 加入白名单。
+
 ## 登录失效
 
 工作流使用可见浏览器。登录失效时在打开的 Chrome/Edge 窗口完成扫码或验证，然后重新运行任务。不要把 Cookie 导出到仓库或飞书表。

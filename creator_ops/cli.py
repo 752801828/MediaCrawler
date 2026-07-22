@@ -5,6 +5,7 @@ import asyncio
 import typer
 
 from creator_ops.config import Settings, SettingsError, load_settings
+from creator_ops.migrate import migrate_legacy_creator_history
 from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
 
 app = typer.Typer(
@@ -40,6 +41,40 @@ def sync_only() -> None:
 def validate_config() -> None:
     settings = _load_or_exit()
     typer.echo(settings.redacted_summary())
+
+
+@app.command("migrate-legacy")
+def migrate_legacy(
+    owned_user_id: list[str] = typer.Option(
+        [],
+        "--owned-user-id",
+        help="A creator user ID owned by you; repeat for multiple accounts.",
+    ),
+    apply: bool = typer.Option(
+        False,
+        "--apply",
+        help="Write eligible snapshots. Without this flag the command is a dry-run.",
+    ),
+) -> None:
+    settings = _load_or_exit()
+    try:
+        summary = asyncio.run(
+            migrate_legacy_creator_history(
+                settings,
+                owned_user_ids=set(owned_user_id),
+                apply=apply,
+            )
+        )
+    except ValueError as exc:
+        typer.echo(f"Migration error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    typer.echo(
+        "Legacy migration finished: "
+        f"scanned={summary.scanned}, "
+        f"eligible={summary.eligible}, "
+        f"imported={summary.imported}, "
+        f"dry_run={not apply}"
+    )
 
 
 def _run(**kwargs: bool) -> None:
