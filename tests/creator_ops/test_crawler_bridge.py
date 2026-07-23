@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from playwright._impl._errors import TargetClosedError
 
 import config
 from creator_ops.crawler_bridge import crawler_config_scope, run_public_task
@@ -70,3 +71,38 @@ async def test_run_public_task_uses_existing_loop_and_closes_crawler():
     )
 
     assert events == ["db:db", "start", "close"]
+
+
+@pytest.mark.asyncio
+async def test_run_public_task_preserves_start_error_when_browser_already_closed():
+    class FakeCrawler:
+        async def start(self):
+            raise RuntimeError("store failed")
+
+        async def close(self):
+            raise TargetClosedError("browser already closed")
+
+    async def fake_init_db(_db_type: str):
+        return None
+
+    task = Task(
+        task_id="detail:dy",
+        platform=Platform.DOUYIN,
+        kind=TaskKind.CONTENT_DETAIL,
+        profile=AccountProfile(
+            platform=Platform.DOUYIN,
+            template="dy_text_data_dir",
+            path=Path("D:/browser_data/dy_text_data_dir"),
+            is_main=False,
+            is_water=True,
+        ),
+        targets=("7518846965308820762",),
+        get_comments=True,
+    )
+
+    with pytest.raises(RuntimeError, match="store failed"):
+        await run_public_task(
+            task,
+            crawler_factory=lambda _platform: FakeCrawler(),
+            init_db=fake_init_db,
+        )

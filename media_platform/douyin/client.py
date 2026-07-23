@@ -148,15 +148,15 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         return await self.request(method="POST", url=f"{self._host}{uri}", data=data, headers=headers)
 
     async def pong(self, browser_context: BrowserContext) -> bool:
-        local_storage = await self.playwright_page.evaluate("() => window.localStorage")
-        if local_storage.get("HasUserLogin", "") == "1":
-            return True
-
         _, cookie_dict = await utils.convert_browser_context_cookies(
             browser_context,
             urls=self.cookie_urls,
         )
-        return cookie_dict.get("LOGIN_STATUS") == "1"
+        return (
+            cookie_dict.get("LOGIN_STATUS") == "1"
+            or bool(cookie_dict.get("sessionid"))
+            or bool(cookie_dict.get("sessionid_ss"))
+        )
 
     async def update_cookies(self, browser_context: BrowserContext, urls: Optional[list[str]] = None):
         cookie_str, cookie_dict = await utils.convert_browser_context_cookies(

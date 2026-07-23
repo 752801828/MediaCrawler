@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import config
+from playwright.async_api import Error as PlaywrightError
 
 from creator_ops.domain import Platform, Task, TaskKind
 
@@ -114,6 +115,10 @@ async def _close_crawler(crawler: Any) -> None:
     close = getattr(crawler, "close", None)
     if close is None:
         return
-    result = close()
-    if inspect.isawaitable(result):
-        await result
+    try:
+        result = close()
+        if inspect.isawaitable(result):
+            await result
+    except PlaywrightError as exc:
+        if type(exc).__name__ != "TargetClosedError":
+            raise
