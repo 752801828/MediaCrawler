@@ -36,7 +36,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import config
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import ZhihuContent, ZhihuComment
+from database.models import ZhihuComment, ZhihuContent, ZhihuCreator
+from store.creator_store import upsert_creator
 from tools import utils, words
 from var import crawler_type_var
 from tools.async_file_writer import AsyncFileWriter
@@ -85,8 +86,7 @@ class ZhihuCsvStoreImplement(AbstractStore):
         await self.writer.write_to_csv(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator: Dict):
-        """Creator profile is no longer persisted (teaching version: anti-harassment)."""
-        pass
+        await self.writer.write_to_csv(item_type="creators", item=creator)
 
 
 class ZhihuDbStoreImplement(AbstractStore):
@@ -135,8 +135,7 @@ class ZhihuDbStoreImplement(AbstractStore):
             await session.commit()
 
     async def store_creator(self, creator: Dict):
-        """Creator profile is no longer persisted (teaching version: anti-harassment)."""
-        pass
+        await upsert_creator(ZhihuCreator, creator)
 
 
 class ZhihuJsonStoreImplement(AbstractStore):
@@ -167,8 +166,9 @@ class ZhihuJsonStoreImplement(AbstractStore):
         await self.writer.write_single_item_to_json(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator: Dict):
-        """Creator profile is no longer persisted (teaching version: anti-harassment)."""
-        pass
+        await self.writer.write_single_item_to_json(
+            item_type="creators", item=creator
+        )
 
 
 class ZhihuJsonlStoreImplement(AbstractStore):
@@ -183,8 +183,7 @@ class ZhihuJsonlStoreImplement(AbstractStore):
         await self.writer.write_to_jsonl(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator: Dict):
-        """Creator profile is no longer persisted (teaching version: anti-harassment)."""
-        pass
+        await self.writer.write_to_jsonl(item_type="creators", item=creator)
 
 
 class ZhihuSqliteStoreImplement(ZhihuDbStoreImplement):
@@ -235,8 +234,14 @@ class ZhihuMongoStoreImplement(AbstractStore):
         utils.logger.info(f"[ZhihuMongoStoreImplement.store_comment] Saved comment {comment_id} to MongoDB")
 
     async def store_creator(self, creator_item: Dict):
-        """Creator profile is no longer persisted (teaching version: anti-harassment)."""
-        pass
+        user_id = creator_item.get("user_id")
+        if not user_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="creators",
+            query={"user_id": user_id},
+            data=creator_item,
+        )
 
 
 class ZhihuExcelStoreImplement:

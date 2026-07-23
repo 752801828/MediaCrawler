@@ -197,28 +197,36 @@ class WeiboClient(ProxyRefreshMixin):
         note_id: str,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ):
         """
         get note all comments include sub comments
         :param note_id:
         :param crawl_interval:
         :param callback:
-        :param max_count:
+        :param max_count: deprecated and ignored; comments are fetched until the platform reports the end
         :return:
         """
         result = []
         is_end = False
         max_id = -1
         max_id_type = 0
-        while not is_end and len(result) < max_count:
+        seen_cursors = set()
+        while not is_end:
+            cursor_key = (max_id, max_id_type)
+            if cursor_key in seen_cursors:
+                utils.logger.warning(
+                    f"[WeiboClient.get_note_all_comments] Repeated cursor {cursor_key}, stop pagination"
+                )
+                break
+            seen_cursors.add(cursor_key)
             comments_res = await self.get_note_comments(note_id, max_id, max_id_type)
             max_id: int = comments_res.get("max_id")
             max_id_type: int = comments_res.get("max_id_type")
             comment_list: List[Dict] = comments_res.get("data", [])
             is_end = max_id == 0
-            if len(result) + len(comment_list) > max_count:
-                comment_list = comment_list[:max_count - len(result)]
+            if not comment_list:
+                break
             if callback:  # If callback function exists, execute it
                 await callback(note_id, comment_list)
             await asyncio.sleep(crawl_interval)
@@ -391,7 +399,14 @@ class WeiboClient(ProxyRefreshMixin):
         notes_has_more = True
         since_id = ""
         crawler_total_count = 0
+        seen_cursors = set()
         while notes_has_more:
+            if since_id in seen_cursors:
+                utils.logger.warning(
+                    f"[WeiboClient.get_all_notes_by_creator_id] Repeated cursor {since_id}, stop pagination"
+                )
+                break
+            seen_cursors.add(since_id)
             notes_res = await self.get_notes_by_creator(creator_id, container_id, since_id)
             if not notes_res:
                 utils.logger.error(f"[WeiboClient.get_notes_by_creator] The current creator may have been banned by Weibo, so they cannot access the data.")
@@ -402,6 +417,8 @@ class WeiboClient(ProxyRefreshMixin):
                 break
 
             notes = notes_res["cards"]
+            if not notes:
+                break
             utils.logger.info(f"[WeiboClient.get_all_notes_by_creator] got user_id:{creator_id} notes len : {len(notes)}")
             notes = [note for note in notes if note.get("card_type") == 9]
             if callback:

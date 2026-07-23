@@ -99,6 +99,7 @@ USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
 START_PAGE = 1
 
 # Control the number of crawled videos/posts
+# Deprecated compatibility value. Platform crawlers no longer use it to truncate results.
 CRAWLER_MAX_NOTES_COUNT = 15
 
 # Controlling the number of concurrent crawlers
@@ -111,6 +112,7 @@ ENABLE_GET_MEIDAS = False
 ENABLE_GET_COMMENTS = True
 
 # Control the number of crawled first-level comments (single video/post)
+# Deprecated compatibility value. First-level comments are crawled until the platform reports the end.
 CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 
 # Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.

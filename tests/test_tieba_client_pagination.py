@@ -61,7 +61,7 @@ async def test_comments_walk_pages_until_total_reply_page():
     client._get_pc_page_data = fake_get_page_data
     client._page_extractor.extract_tieba_note_parent_comments_from_api = fake_extract_comments
 
-    await client.get_note_all_comments(note, crawl_interval=0, max_count=10)
+    await client.get_note_all_comments(note, crawl_interval=0, max_count=1)
 
     assert pages == [1, 2]
 

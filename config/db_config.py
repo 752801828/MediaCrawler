@@ -20,12 +20,23 @@
 
 import os
 
+from dotenv import load_dotenv
+
+
+load_dotenv()
+
+
+def _env(primary: str, fallback: str, default: str) -> str:
+    """Read the upstream database key with creator-ops compatibility."""
+    return os.getenv(primary) or os.getenv(fallback) or default
+
+
 # mysql config
-MYSQL_DB_PWD = os.getenv("MYSQL_DB_PWD", "123456")
-MYSQL_DB_USER = os.getenv("MYSQL_DB_USER", "root")
-MYSQL_DB_HOST = os.getenv("MYSQL_DB_HOST", "localhost")
-MYSQL_DB_PORT = os.getenv("MYSQL_DB_PORT", 3306)
-MYSQL_DB_NAME = os.getenv("MYSQL_DB_NAME", "media_crawler")
+MYSQL_DB_PWD = _env("MYSQL_DB_PWD", "RELATION_DB_PWD", "123456")
+MYSQL_DB_USER = _env("MYSQL_DB_USER", "RELATION_DB_USER", "root")
+MYSQL_DB_HOST = _env("MYSQL_DB_HOST", "RELATION_DB_HOST", "localhost")
+MYSQL_DB_PORT = _env("MYSQL_DB_PORT", "RELATION_DB_PORT", "3306")
+MYSQL_DB_NAME = _env("MYSQL_DB_NAME", "RELATION_DB_NAME", "media_crawler")
 
 mysql_db_config = {
     "user": MYSQL_DB_USER,

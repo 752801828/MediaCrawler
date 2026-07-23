@@ -155,8 +155,6 @@ class TieBaCrawler(AbstractCrawler):
             "[BaiduTieBaCrawler.search] Begin search baidu tieba keywords"
         )
         tieba_limit_count = 10  # tieba limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < tieba_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = tieba_limit_count
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
@@ -164,9 +162,7 @@ class TieBaCrawler(AbstractCrawler):
                 f"[BaiduTieBaCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
-            while (
-                page - start_page + 1
-            ) * tieba_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while True:
                 if page < start_page:
                     utils.logger.info(f"[BaiduTieBaCrawler.search] Skip page {page}")
                     page += 1
@@ -214,14 +210,12 @@ class TieBaCrawler(AbstractCrawler):
 
         """
         tieba_limit_count = 30
-        if config.CRAWLER_MAX_NOTES_COUNT < tieba_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = tieba_limit_count
         for tieba_name in config.TIEBA_NAME_LIST:
             utils.logger.info(
                 f"[BaiduTieBaCrawler.get_specified_tieba_notes] Begin get tieba name: {tieba_name}"
             )
             page_number = 0
-            while page_number <= config.CRAWLER_MAX_NOTES_COUNT:
+            while True:
                 note_list: List[TiebaNote] = (
                     await self.tieba_client.get_notes_by_tieba_name(
                         tieba_name=tieba_name, page_num=page_number
@@ -357,7 +351,6 @@ class TieBaCrawler(AbstractCrawler):
                 note_detail=note_detail,
                 crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
                 callback=tieba_store.batch_update_tieba_note_comments,
-                max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
             )
 
     async def get_creators_and_notes(self) -> None:
@@ -388,7 +381,6 @@ class TieBaCrawler(AbstractCrawler):
                         creator_url=creator_url,
                         crawl_interval=0,
                         callback=tieba_store.batch_update_tieba_notes,
-                        max_note_count=config.CRAWLER_MAX_NOTES_COUNT,
                     )
                 )
 

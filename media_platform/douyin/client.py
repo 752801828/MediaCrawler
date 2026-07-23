@@ -256,7 +256,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         crawl_interval: float = 1.0,
         is_fetch_sub_comments=False,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ):
         """
         获取帖子的所有评论，包括子评论
@@ -264,21 +264,26 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         :param crawl_interval: 抓取间隔
         :param is_fetch_sub_comments: 是否抓取子评论
         :param callback: 回调函数，用于处理抓取到的评论
-        :param max_count: 一次帖子爬取的最大评论数量
+        :param max_count: 已弃用，保留仅用于调用兼容；一级评论始终抓取到平台返回结束
         :return: 评论列表
         """
         result = []
         comments_has_more = 1
         comments_cursor = 0
-        while comments_has_more and len(result) < max_count:
+        seen_cursors = set()
+        while comments_has_more:
+            if comments_cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[DouYinClient.get_aweme_all_comments] Repeated cursor {comments_cursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(comments_cursor)
             comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
             comments_has_more = comments_res.get("has_more", 0)
             comments_cursor = comments_res.get("cursor", 0)
             comments = comments_res.get("comments", [])
             if not comments:
-                continue
-            if len(result) + len(comments) > max_count:
-                comments = comments[:max_count - len(result)]
+                break
             result.extend(comments)
             if callback:  # If there is a callback function, execute the callback function
                 await callback(aweme_id, comments)
@@ -333,11 +338,20 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         posts_has_more = 1
         max_cursor = ""
         result = []
+        seen_cursors = set()
         while posts_has_more == 1:
+            if max_cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[DouYinClient.get_all_user_aweme_posts] Repeated cursor {max_cursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(max_cursor)
             aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
             posts_has_more = aweme_post_res.get("has_more", 0)
             max_cursor = aweme_post_res.get("max_cursor")
             aweme_list = aweme_post_res.get("aweme_list") if aweme_post_res.get("aweme_list") else []
+            if not aweme_list:
+                break
             utils.logger.info(f"[DouYinClient.get_all_user_aweme_posts] get sec_user_id:{sec_user_id} video len : {len(aweme_list)}")
             if callback:
                 await callback(aweme_list)

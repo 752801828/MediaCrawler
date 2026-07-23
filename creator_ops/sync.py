@@ -11,6 +11,7 @@ from creator_ops.config import Settings
 from creator_ops.domain import MetricRecord, Platform
 from creator_ops.feishu.client import FeishuClient, FeishuError
 from creator_ops.feishu.schema import PRIVACY_RESTRICTED_COMMENT_FIELDS
+from tools.user_hash import mask_nickname
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,7 @@ def _comment_feishu_payload(
     cleaned = sanitize_comment_fields(fields)
     creator_hash = str(cleaned.pop("creator_hash", "") or "")
     cleaned["user_id"] = f"anon:{creator_hash}" if creator_hash else ""
+    cleaned["nickname"] = mask_nickname(cleaned.get("nickname"))
     cleaned["add_ts"] = _format_timestamp(cleaned.get("add_ts"))
     cleaned["last_modify_ts"] = _format_timestamp(cleaned.get("last_modify_ts"))
     cleaned["create_time"] = _format_timestamp(cleaned.get("create_time"))

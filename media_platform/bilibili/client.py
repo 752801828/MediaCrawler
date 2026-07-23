@@ -263,7 +263,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         crawl_interval: float = 1.0,
         is_fetch_sub_comments=False,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ):
         """
         get video all comments include sub comments
@@ -271,7 +271,7 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         :param crawl_interval:
         :param is_fetch_sub_comments:
         :param callback:
-        max_count: Maximum number of comments to crawl per note
+        max_count: Deprecated and ignored; first-level comments are fetched until the platform reports the end
 
         :return:
         """
@@ -279,7 +279,14 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         is_end = False
         next_page = 0
         max_retries = 3
-        while not is_end and len(result) < max_count:
+        seen_pages = set()
+        while not is_end:
+            if next_page in seen_pages:
+                utils.logger.warning(
+                    f"[BilibiliClient.get_video_all_comments] Repeated cursor {next_page}, stop pagination"
+                )
+                break
+            seen_pages.add(next_page)
             comments_res = None
             for attempt in range(max_retries):
                 try:
@@ -303,6 +310,8 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
                 break
 
             comment_list: List[Dict] = comments_res.get("replies", [])
+            if not comment_list:
+                break
 
             # Check if is_end and next exist
             if "is_end" not in cursor_info or "next" not in cursor_info:
@@ -320,8 +329,6 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
                     comment_id = comment['rpid']
                     if (comment.get("rcount", 0) > 0):
                         {await self.get_video_all_level_two_comments(video_id, comment_id, CommentOrderType.DEFAULT, 10, crawl_interval, callback)}
-            if len(result) + len(comment_list) > max_count:
-                comment_list = comment_list[:max_count - len(result)]
             if callback:  # If there is a callback function, execute it
                 await callback(video_id, comment_list)
             await asyncio.sleep(crawl_interval)
@@ -483,27 +490,25 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         creator_info: Dict,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 100,
+        max_count: Optional[int] = None,
     ) -> List:
         """
         get creator all fans
         :param creator_info:
         :param crawl_interval:
         :param callback:
-        :param max_count: Maximum number of fans to crawl for a creator
+        :param max_count: Deprecated and ignored; fans are fetched until an empty page
 
         :return: List of creator fans
         """
         creator_id = creator_info["id"]
         result = []
         pn = config.START_CONTACTS_PAGE
-        while len(result) < max_count:
+        while True:
             fans_res: Dict = await self.get_creator_fans(creator_id, pn=pn)
             fans_list: List[Dict] = fans_res.get("list", [])
 
             pn += 1
-            if len(result) + len(fans_list) > max_count:
-                fans_list = fans_list[:max_count - len(result)]
             if callback:  # If there is a callback function, execute it
                 await callback(creator_info, fans_list)
             await asyncio.sleep(crawl_interval)
@@ -517,27 +522,25 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         creator_info: Dict,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 100,
+        max_count: Optional[int] = None,
     ) -> List:
         """
         get creator all followings
         :param creator_info:
         :param crawl_interval:
         :param callback:
-        :param max_count: Maximum number of followings to crawl for a creator
+        :param max_count: Deprecated and ignored; followings are fetched until an empty page
 
         :return: List of creator followings
         """
         creator_id = creator_info["id"]
         result = []
         pn = config.START_CONTACTS_PAGE
-        while len(result) < max_count:
+        while True:
             followings_res: Dict = await self.get_creator_followings(creator_id, pn=pn)
             followings_list: List[Dict] = followings_res.get("list", [])
 
             pn += 1
-            if len(result) + len(followings_list) > max_count:
-                followings_list = followings_list[:max_count - len(result)]
             if callback:  # If there is a callback function, execute it
                 await callback(creator_info, followings_list)
             await asyncio.sleep(crawl_interval)
@@ -551,14 +554,14 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         creator_info: Dict,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 20,
+        max_count: Optional[int] = None,
     ) -> List:
         """
         get creator all followings
         :param creator_info:
         :param crawl_interval:
         :param callback:
-        :param max_count: Maximum number of dynamics to crawl for a creator
+        :param max_count: Deprecated and ignored; dynamics are fetched until the platform reports the end
 
         :return: List of creator dynamics
         """
@@ -566,13 +569,20 @@ class BilibiliClient(AbstractApiClient, ProxyRefreshMixin):
         result = []
         offset = ""
         has_more = True
-        while has_more and len(result) < max_count:
+        seen_offsets = set()
+        while has_more:
+            if offset in seen_offsets:
+                utils.logger.warning(
+                    f"[BilibiliClient.get_creator_all_dynamics] Repeated offset {offset}, stop pagination"
+                )
+                break
+            seen_offsets.add(offset)
             dynamics_res = await self.get_creator_dynamics(creator_id, offset)
             dynamics_list: List[Dict] = dynamics_res["items"]
             has_more = dynamics_res["has_more"]
             offset = dynamics_res["offset"]
-            if len(result) + len(dynamics_list) > max_count:
-                dynamics_list = dynamics_list[:max_count - len(result)]
+            if not dynamics_list:
+                break
             if callback:
                 await callback(creator_info, dynamics_list)
             await asyncio.sleep(crawl_interval)

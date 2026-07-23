@@ -19,6 +19,7 @@
 # bilili platform configuration
 
 # Control the number of videos/posts crawled per day
+# Deprecated compatibility value. Time-range search no longer truncates daily results.
 MAX_NOTES_PER_DAY = 1
 
 # Specify Bilibili video URL list (supports complete URL or BV number)

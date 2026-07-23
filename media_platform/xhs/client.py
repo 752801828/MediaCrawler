@@ -410,7 +410,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         xsec_token: str,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ) -> List[Dict]:
         """
         Get all first-level comments under specified note, this method will continuously find all comment information under a post
@@ -419,14 +419,21 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
             xsec_token: Verification token
             crawl_interval: Crawl delay per note (seconds)
             callback: Callback after one note crawl ends
-            max_count: Maximum number of comments to crawl per note
+            max_count: Deprecated and ignored; comments are fetched until the platform reports the end
         Returns:
 
         """
         result = []
         comments_has_more = True
         comments_cursor = ""
-        while comments_has_more and len(result) < max_count:
+        seen_cursors = set()
+        while comments_has_more:
+            if comments_cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[XiaoHongShuClient.get_note_all_comments] Repeated cursor {comments_cursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(comments_cursor)
             comments_res = await self.get_note_comments(
                 note_id=note_id, xsec_token=xsec_token, cursor=comments_cursor
             )
@@ -438,8 +445,8 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 )
                 break
             comments = comments_res["comments"]
-            if len(result) + len(comments) > max_count:
-                comments = comments[: max_count - len(result)]
+            if not comments:
+                break
             if callback:
                 await callback(note_id, comments)
             await asyncio.sleep(crawl_interval)
@@ -615,7 +622,14 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         result = []
         notes_has_more = True
         notes_cursor = ""
-        while notes_has_more and len(result) < config.CRAWLER_MAX_NOTES_COUNT:
+        seen_cursors = set()
+        while notes_has_more:
+            if notes_cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[XiaoHongShuClient.get_all_notes_by_creator] Repeated cursor {notes_cursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(notes_cursor)
             notes_res = await self.get_notes_by_creator(
                 user_id, notes_cursor, xsec_token=xsec_token, xsec_source=xsec_source
             )
@@ -634,19 +648,16 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                 break
 
             notes = notes_res["notes"]
+            if not notes:
+                break
             utils.logger.info(
                 f"[XiaoHongShuClient.get_all_notes_by_creator] got user_id:{user_id} notes len : {len(notes)}"
             )
 
-            remaining = config.CRAWLER_MAX_NOTES_COUNT - len(result)
-            if remaining <= 0:
-                break
-
-            notes_to_add = notes[:remaining]
             if callback:
-                await callback(notes_to_add)
+                await callback(notes)
 
-            result.extend(notes_to_add)
+            result.extend(notes)
             await asyncio.sleep(crawl_interval)
 
         utils.logger.info(

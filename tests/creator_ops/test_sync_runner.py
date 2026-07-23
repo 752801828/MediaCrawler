@@ -11,7 +11,12 @@ import pytest
 from creator_ops.config import FeishuSettings, MysqlSettings, Settings
 from creator_ops.domain import MetricRecord, Platform
 from creator_ops.runner import CreatorOpsRunner
-from creator_ops.sync import OutboxSynchronizer, SyncSummary, sanitize_comment_fields
+from creator_ops.sync import (
+    OutboxSynchronizer,
+    SyncSummary,
+    _comment_feishu_payload,
+    sanitize_comment_fields,
+)
 
 
 def settings_for(tmp_path: Path) -> Settings:
@@ -61,6 +66,25 @@ def test_sanitize_comment_fields_removes_public_identity():
     assert output["avatar"] == ""
     assert output["ip_location"] == ""
     assert output["user_signature"] == ""
+
+
+def test_comment_feishu_payload_masks_local_raw_nickname():
+    output = _comment_feishu_payload(
+        {
+            "comment_id": "c1",
+            "creator_hash": "hash",
+            "nickname": "完整昵称",
+            "user_id": "raw-user",
+            "avatar": "https://private",
+            "ip_location": "北京",
+        },
+        Platform.DOUYIN,
+    )
+
+    assert output["nickname"] == "完***称"
+    assert output["user_id"] == "anon:hash"
+    assert output["avatar"] == ""
+    assert output["ip_location"] == ""
 
 
 @pytest.mark.asyncio

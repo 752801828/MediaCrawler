@@ -454,7 +454,7 @@ class BaiduTieBaClient(AbstractApiClient):
         note_detail: TiebaNote,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ) -> List[TiebaComment]:
         """
         Get all first-level comments for specified post (uses Playwright to access page, avoiding API detection)
@@ -462,7 +462,7 @@ class BaiduTieBaClient(AbstractApiClient):
             note_detail: Post detail object
             crawl_interval: Crawl delay interval in seconds
             callback: Callback function after one post crawl completes
-            max_count: Maximum number of comments to crawl per post
+            max_count: Deprecated and ignored; comments are fetched until all known pages are exhausted
         Returns:
             List[TiebaComment]: Comment list
         """
@@ -473,7 +473,7 @@ class BaiduTieBaClient(AbstractApiClient):
         result: List[TiebaComment] = []
         current_page = 1
 
-        while note_detail.total_replay_page >= current_page and len(result) < max_count:
+        while note_detail.total_replay_page >= current_page:
             utils.logger.info(
                 f"[BaiduTieBaClient.get_note_all_comments] Accessing comment API, "
                 f"note_id: {note_detail.note_id}, page: {current_page}"
@@ -488,10 +488,6 @@ class BaiduTieBaClient(AbstractApiClient):
                 if not comments:
                     utils.logger.info(f"[BaiduTieBaClient.get_note_all_comments] Page {current_page} has no comments, stopping crawl")
                     break
-
-                # Limit comment count
-                if len(result) + len(comments) > max_count:
-                    comments = comments[:max_count - len(result)]
 
                 if callback:
                     await callback(note_detail.note_id, comments)
@@ -758,7 +754,7 @@ class BaiduTieBaClient(AbstractApiClient):
         user_name: str,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_note_count: int = 0,
+        max_note_count: Optional[int] = None,
         creator_page_html_content: str = None,
     ) -> List[TiebaNote]:
         """
@@ -767,7 +763,7 @@ class BaiduTieBaClient(AbstractApiClient):
             user_name: Creator username
             crawl_interval: Crawl delay interval in seconds
             callback: Callback function after one post crawl completes, an awaitable function
-            max_note_count: Maximum number of posts to retrieve, if 0 then get all
+            max_note_count: Deprecated and ignored; posts are fetched until the platform reports the end
             creator_page_html_content: Creator homepage HTML content
 
         Returns:
@@ -786,9 +782,7 @@ class BaiduTieBaClient(AbstractApiClient):
 
         notes_has_more = 1
         page_number = 1
-        page_per_count = 20
-        total_get_count = 0
-        while notes_has_more == 1 and (max_note_count == 0 or total_get_count < max_note_count):
+        while notes_has_more == 1:
             notes_res = await self.get_notes_by_creator(user_name, page_number)
             if not notes_res or notes_res.get("no") != 0:
                 utils.logger.error(f"[TieBaClient.get_notes_by_creator] got user_name:{user_name} notes failed, notes_res: {notes_res}")
@@ -796,6 +790,8 @@ class BaiduTieBaClient(AbstractApiClient):
             notes_data = notes_res.get("data")
             notes_has_more = notes_data.get("has_more")
             notes = notes_data["thread_list"]
+            if not notes:
+                break
             utils.logger.info(f"[TieBaClient.get_all_notes_by_creator] got user_name:{user_name} notes len : {len(notes)}")
 
             note_detail_task = [self.get_note_by_id(note['thread_id']) for note in notes]
@@ -805,7 +801,6 @@ class BaiduTieBaClient(AbstractApiClient):
             await asyncio.sleep(crawl_interval)
             result.extend(notes)
             page_number += 1
-            total_get_count += page_per_count
         return result
 
     async def get_all_notes_by_creator_url(
@@ -813,7 +808,7 @@ class BaiduTieBaClient(AbstractApiClient):
         creator_url: str,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_note_count: int = 0,
+        max_note_count: Optional[int] = None,
     ) -> List[TiebaNote]:
         """
         Get all creator posts by current PC creator feed API.
@@ -826,7 +821,7 @@ class BaiduTieBaClient(AbstractApiClient):
         page_number = 1
         page_size = 20
 
-        while max_note_count == 0 or len(result) < max_note_count:
+        while True:
             notes_res = await self.get_notes_by_creator_portrait(
                 portrait=portrait,
                 page_number=page_number,
@@ -839,9 +834,6 @@ class BaiduTieBaClient(AbstractApiClient):
                     f"Creator portrait:{portrait} page:{page_number} has no threads"
                 )
                 break
-
-            if max_note_count:
-                thread_id_list = thread_id_list[: max_note_count - len(result)]
 
             utils.logger.info(
                 f"[BaiduTieBaClient.get_all_notes_by_creator_url] "
