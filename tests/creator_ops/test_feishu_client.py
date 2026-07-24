@@ -131,3 +131,26 @@ def test_batch_create_splits_records_at_500(feishu_settings: FeishuSettings):
 
     writes = session.requests[1:]
     assert [len(item["json"]["records"]) for item in writes] == [500, 1]
+
+
+def test_batch_update_includes_remote_record_ids(
+    feishu_settings: FeishuSettings,
+):
+    session = FakeSession()
+    queue_token(session)
+    session.queue(200, {"code": 0, "data": {"records": []}})
+    client = FeishuClient(feishu_settings, session=session, sleeper=lambda _: None)
+
+    client.batch_update_records(
+        "app",
+        "table",
+        [("rec-1", {"标题": "Video"})],
+    )
+
+    write = session.requests[1]
+    assert write["url"].endswith("/records/batch_update")
+    assert write["json"] == {
+        "records": [
+            {"record_id": "rec-1", "fields": {"标题": "Video"}}
+        ]
+    }

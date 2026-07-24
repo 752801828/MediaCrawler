@@ -90,6 +90,30 @@ class FeishuClient:
             )
         return responses
 
+    def batch_update_records(
+        self,
+        app_token: str,
+        table_id: str,
+        records: Iterable[tuple[str, dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
+        rows = list(records)
+        responses: list[dict[str, Any]] = []
+        for start in range(0, len(rows), 500):
+            chunk = rows[start : start + 500]
+            responses.append(
+                self._authorized_request(
+                    "POST",
+                    f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_update",
+                    json={
+                        "records": [
+                            {"record_id": record_id, "fields": fields}
+                            for record_id, fields in chunk
+                        ]
+                    },
+                )
+            )
+        return responses
+
     def _authorized_request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         token = self._tenant_access_token()
         headers = dict(kwargs.pop("headers", {}))

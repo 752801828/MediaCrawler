@@ -9,6 +9,7 @@ from creator_ops.domain import AccountProfile, Platform
 from creator_ops.platforms.base import parse_metric_number
 from creator_ops.platforms.douyin_creator import (
     DouyinCreatorCollector,
+    extract_douyin_work_id,
     normalize_douyin_row,
     wait_for_douyin_creator_table,
 )
@@ -69,6 +70,38 @@ def test_normalize_douyin_row_converts_percentages():
     assert record.platform is Platform.DOUYIN
     assert record.metrics["浏览"] == 25000
     assert record.metrics["完播率"] == 31.2
+
+
+def test_normalize_douyin_row_uses_work_id_and_public_url():
+    work_id = "7665675303762968305"
+    public_url = f"https://www.douyin.com/video/{work_id}"
+
+    record = normalize_douyin_row(
+        profile_key="%s_use_data_dir",
+        row={
+            "标题": "示例视频",
+            "创建时间": "2026-07-23 18:55",
+            "内容ID": work_id,
+            "作品链接": public_url,
+            "浏览": "10",
+        },
+        snapshot_date=date(2026, 7, 24),
+    )
+
+    assert record.content_key == work_id
+    assert record.content_url == public_url
+    assert record.metrics == {"浏览": 10}
+
+
+@pytest.mark.asyncio
+async def test_extract_douyin_work_id_accepts_bound_row_value():
+    class Row:
+        async def evaluate(self, script):
+            assert "__reactProps$" in script
+            assert "sibling" not in script
+            return "7665675303762968305"
+
+    assert await extract_douyin_work_id(Row()) == "7665675303762968305"
 
 
 @pytest.mark.asyncio

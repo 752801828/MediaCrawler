@@ -55,6 +55,7 @@ class MetricRecord:
     title: str
     published_at: datetime | None
     snapshot_date: date
+    content_url: str = ""
     metrics: dict[str, Any] = field(default_factory=dict)
 
 

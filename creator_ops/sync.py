@@ -13,6 +13,14 @@ from creator_ops.feishu.client import FeishuClient, FeishuError
 from creator_ops.feishu.schema import PRIVACY_RESTRICTED_COMMENT_FIELDS
 from tools.user_hash import mask_nickname
 
+DOUYIN_FEISHU_METRIC_FIELDS = {
+    "完播率": "完播率_",
+    "5S完播率": "5S完播放率_",
+    "封面点击率": "封面点击率_",
+    "2S跳出率": "2S跳出率_",
+}
+DOUYIN_PERCENTAGE_METRICS = frozenset(DOUYIN_FEISHU_METRIC_FIELDS)
+
 
 @dataclass(frozen=True)
 class SyncSummary:
@@ -38,8 +46,22 @@ def metric_feishu_payload(record: MetricRecord) -> dict[str, Any]:
             else ""
         ),
     }
-    payload.update(record.metrics)
+    if record.content_url:
+        payload["作品链接"] = record.content_url
+    if record.platform is Platform.DOUYIN:
+        for key, value in record.metrics.items():
+            target_key = DOUYIN_FEISHU_METRIC_FIELDS.get(key, key)
+            payload[target_key] = _douyin_metric_text(key, value)
+    else:
+        payload.update(record.metrics)
     return payload
+
+
+def _douyin_metric_text(key: str, value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if key in DOUYIN_PERCENTAGE_METRICS and text and not text.endswith("%"):
+        text = f"{text}%"
+    return text
 
 
 def metric_business_key(record: MetricRecord) -> str:
@@ -68,23 +90,71 @@ class OutboxSynchronizer:
         succeeded = 0
         failed = 0
         for target, target_rows in grouped.items():
-            try:
-                payloads = [json.loads(row.payload_json) for row in target_rows]
-                await asyncio.to_thread(
-                    self.client.batch_create_records,
-                    self.settings.feishu.app_token,
-                    self._table_id(target),
-                    payloads,
-                )
-            except Exception as exc:
-                failed += len(target_rows)
-                error = type(exc).__name__
-                for row in target_rows:
-                    await self.repository.mark_sync_failed(row.id, error)
-            else:
-                succeeded += len(target_rows)
-                for row in target_rows:
-                    await self.repository.mark_sync_succeeded(row.id)
+            table_id = self._table_id(target)
+            create_rows = [
+                row
+                for row in target_rows
+                if not str(getattr(row, "remote_record_id", "") or "").strip()
+            ]
+            update_rows = [
+                row
+                for row in target_rows
+                if str(getattr(row, "remote_record_id", "") or "").strip()
+            ]
+
+            if create_rows:
+                try:
+                    responses = await asyncio.to_thread(
+                        self.client.batch_create_records,
+                        self.settings.feishu.app_token,
+                        table_id,
+                        [json.loads(row.payload_json) for row in create_rows],
+                    )
+                    record_ids = _created_record_ids(responses)
+                    if len(record_ids) != len(create_rows):
+                        raise FeishuError(
+                            "Feishu create response record count mismatch"
+                        )
+                except Exception as exc:
+                    failed += len(create_rows)
+                    error = type(exc).__name__
+                    for row in create_rows:
+                        await self.repository.mark_sync_failed(row.id, error)
+                else:
+                    succeeded += len(create_rows)
+                    for row, record_id in zip(
+                        create_rows,
+                        record_ids,
+                        strict=True,
+                    ):
+                        await self.repository.mark_sync_succeeded(
+                            row.id,
+                            remote_record_id=record_id,
+                        )
+
+            if update_rows:
+                try:
+                    await asyncio.to_thread(
+                        self.client.batch_update_records,
+                        self.settings.feishu.app_token,
+                        table_id,
+                        [
+                            (
+                                str(row.remote_record_id),
+                                json.loads(row.payload_json),
+                            )
+                            for row in update_rows
+                        ],
+                    )
+                except Exception as exc:
+                    failed += len(update_rows)
+                    error = type(exc).__name__
+                    for row in update_rows:
+                        await self.repository.mark_sync_failed(row.id, error)
+                else:
+                    succeeded += len(update_rows)
+                    for row in update_rows:
+                        await self.repository.mark_sync_succeeded(row.id)
         return SyncSummary(
             attempted=len(rows),
             succeeded=succeeded,
@@ -169,6 +239,19 @@ def _comment_feishu_payload(
     else:
         cleaned.update({"avatar": "", "ip_location": ""})
     return cleaned
+
+
+def _created_record_ids(responses: list[dict[str, Any]]) -> list[str]:
+    record_ids: list[str] = []
+    for response in responses:
+        records = (response.get("data") or {}).get("records") or []
+        for record in records:
+            record_id = str(
+                record.get("record_id") or record.get("id") or ""
+            ).strip()
+            if record_id:
+                record_ids.append(record_id)
+    return record_ids
 
 
 def _format_timestamp(value: Any) -> str:

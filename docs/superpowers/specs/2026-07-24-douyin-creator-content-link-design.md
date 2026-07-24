@@ -41,7 +41,14 @@ Upserts update the URL so previously stored daily rows can be enriched by a
 later successful extraction.
 
 The Feishu metrics payload includes `作品链接` as a plain URL string because
-the configured Feishu field is Text.
+the configured Feishu field is Text. Douyin metrics are written to the table's
+writable text input fields. Percentage metrics use the corresponding
+underscore-suffixed source fields and retain the `%` suffix; the table's
+formula fields remain read-only.
+
+The sync outbox stores the Feishu `record_id` returned by the first create
+request. A later payload change for the same business key uses batch update
+against that record ID instead of creating a duplicate row.
 
 ## Error Handling
 
@@ -59,6 +66,6 @@ the configured Feishu field is Text.
 - Normalization tests cover content key and public URL behavior.
 - Storage tests cover insertion and update of `content_url`.
 - Feishu payload tests cover the `作品链接` field.
+- Sync tests cover first-time create ID capture and later batch update.
 - Run the Douyin creator-metrics-only command and verify a successful workflow,
   non-empty MySQL URLs, and successful Feishu outbox delivery.
-

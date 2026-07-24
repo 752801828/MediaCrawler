@@ -60,6 +60,7 @@ async def test_upsert_content_snapshot_updates_same_daily_key(repository):
         profile_key="%s_use_data_dir",
         content_key="note-1",
         title="Title",
+        content_url="https://www.xiaohongshu.com/explore/note-1",
         published_at=datetime(2026, 7, 20, 10, 0),
         snapshot_date=date(2026, 7, 21),
         metrics={"浏览": 10},
@@ -69,6 +70,7 @@ async def test_upsert_content_snapshot_updates_same_daily_key(repository):
         profile_key=first.profile_key,
         content_key=first.content_key,
         title=first.title,
+        content_url="https://www.xiaohongshu.com/explore/note-1-updated",
         published_at=first.published_at,
         snapshot_date=first.snapshot_date,
         metrics={"浏览": 20},
@@ -82,6 +84,7 @@ async def test_upsert_content_snapshot_updates_same_daily_key(repository):
         count = await session.scalar(select(func.count()).select_from(CreatorContentMetricSnapshot))
         row = await session.scalar(select(CreatorContentMetricSnapshot))
     assert count == 1
+    assert row.content_url == "https://www.xiaohongshu.com/explore/note-1-updated"
     assert json.loads(row.metrics_json) == {"浏览": 20}
 
 
@@ -97,11 +100,12 @@ async def test_outbox_transitions_from_pending_to_synced(repository):
     pending = await repo.pending_sync()
 
     assert [row.id for row in pending] == [outbox_id]
-    await repo.mark_sync_succeeded(outbox_id)
+    await repo.mark_sync_succeeded(outbox_id, remote_record_id="rec-1")
     assert await repo.pending_sync() == []
     async with session_maker() as session:
         row = await session.get(CreatorOpsSyncOutbox, outbox_id)
     assert row.status == "synced"
+    assert row.remote_record_id == "rec-1"
     assert row.synced_at is not None
 
 

@@ -21,7 +21,52 @@ from .base import (
 DOUYIN_CREATOR_URL = "https://creator.douyin.com/creator-micro/data-center/content"
 DOUYIN_CREATOR_TABLE_SELECTOR = "tr.douyin-creator-pc-table-row"
 DOUYIN_VERIFICATION_POLL_MS = 1_000
+DOUYIN_PUBLIC_VIDEO_URL = "https://www.douyin.com/video/{work_id}"
 RowSource = Callable[[AccountProfile], AsyncIterator[list[dict[str, Any]]]]
+
+DOUYIN_WORK_ID_FROM_ROW_SCRIPT = """
+element => {
+  const isWorkId = value => /^\\d{16,20}$/.test(String(value || ""));
+  const reactPropsKey = Object.getOwnPropertyNames(element)
+    .find(key => key.startsWith("__reactProps$"));
+  if (!reactPropsKey) {
+    return "";
+  }
+
+  const props = element[reactPropsKey];
+  const children = Array.isArray(props?.children)
+    ? props.children
+    : [props?.children];
+  for (const child of children) {
+    const owner = child?._owner;
+    const containers = [
+      owner?.memoizedProps,
+      owner?.pendingProps,
+      owner,
+      child,
+    ];
+    for (const container of containers) {
+      const candidates = [
+        container?.record?.id,
+        container?.record?.aweme_id,
+        container?.record?.work_id,
+        container?.rowKey,
+        container?.aweme_id,
+        container?.awemeId,
+        container?.work_id,
+        container?.workId,
+        container?.key,
+      ];
+      for (const candidate of candidates) {
+        if (isWorkId(candidate)) {
+          return String(candidate);
+        }
+      }
+    }
+  }
+  return "";
+}
+"""
 
 DOUYIN_COLUMN_INDEX = {
     "浏览": 3,
@@ -51,7 +96,7 @@ def normalize_douyin_row(
     metrics = {
         key: parse_metric_number(value)
         for key, value in row.items()
-        if key not in {"标题", "创建时间", "内容ID"}
+        if key not in {"标题", "创建时间", "内容ID", "作品链接"}
     }
     return MetricRecord(
         platform=Platform.DOUYIN,
@@ -64,6 +109,7 @@ def normalize_douyin_row(
             explicit_id=str(row.get("内容ID") or ""),
         ),
         title=title,
+        content_url=str(row.get("作品链接") or "").strip(),
         published_at=published_at,
         snapshot_date=snapshot_date or date.today(),
         metrics=metrics,
@@ -103,7 +149,9 @@ class DouyinCreatorCollector:
                 for _ in range(50):
                     current_rows = await self._parse_visible_rows(page)
                     for row in current_rows:
-                        key = f"{row.get('标题', '')}|{row.get('创建时间', '')}"
+                        key = str(row.get("内容ID") or "").strip()
+                        if not key:
+                            key = f"{row.get('标题', '')}|{row.get('创建时间', '')}"
                         parsed_by_key[key] = row
                     row_count = len(parsed_by_key)
                     if row_count == previous_count:
@@ -128,16 +176,65 @@ class DouyinCreatorCollector:
         rows: list[dict[str, Any]] = []
         for index in range(await rows_locator.count()):
             row = rows_locator.nth(index)
-            parsed: dict[str, Any] = {
-                "标题": await locator_text(row.locator("[class*='workTitle'] span")),
-                "创建时间": await locator_text(row.locator("[class*='date']")),
-            }
-            for field, column_index in DOUYIN_COLUMN_INDEX.items():
-                parsed[field] = await locator_text(
-                    row.locator(f"td[aria-colindex='{column_index}'] span")
+            if not await row.locator("td").count():
+                continue
+            try:
+                title = await locator_text(
+                    row.locator("[class*='workTitle'] span")
                 )
-            rows.append(parsed)
+                if not title:
+                    utils.logger.warning(
+                        "[DouyinCreatorCollector] 跳过缺少标题的数据行，"
+                        f"row_index={index}"
+                    )
+                    continue
+                published_text = await locator_text(
+                    row.locator("[class*='date']")
+                )
+                published_at = next(
+                    (
+                        line.strip()
+                        for line in published_text.splitlines()
+                        if line.strip()
+                    ),
+                    "",
+                )
+                work_id = await extract_douyin_work_id(row)
+                if not work_id:
+                    utils.logger.warning(
+                        "[DouyinCreatorCollector] 未从网页结构提取到作品ID，"
+                        f"title={title!r}"
+                    )
+                parsed: dict[str, Any] = {
+                    "标题": title,
+                    "创建时间": published_at,
+                    "内容ID": work_id,
+                    "作品链接": (
+                        DOUYIN_PUBLIC_VIDEO_URL.format(work_id=work_id)
+                        if work_id
+                        else ""
+                    ),
+                }
+                for field, column_index in DOUYIN_COLUMN_INDEX.items():
+                    parsed[field] = await locator_text(
+                        row.locator(f"td[aria-colindex='{column_index}'] span")
+                    )
+                rows.append(parsed)
+            except Exception as exc:
+                utils.logger.warning(
+                    "[DouyinCreatorCollector] 跳过解析失败的数据行，"
+                    f"row_index={index}, error={type(exc).__name__}"
+                )
         return rows
+
+
+async def extract_douyin_work_id(row: Any) -> str:
+    value = str(
+        await row.evaluate(DOUYIN_WORK_ID_FROM_ROW_SCRIPT) or ""
+    ).strip()
+    if value.isdigit() and 16 <= len(value) <= 20:
+        return value
+    return ""
 
 
 async def wait_for_douyin_creator_table(

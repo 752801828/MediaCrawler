@@ -15,6 +15,7 @@ from creator_ops.sync import (
     OutboxSynchronizer,
     SyncSummary,
     _comment_feishu_payload,
+    metric_feishu_payload,
     sanitize_comment_fields,
 )
 
@@ -87,6 +88,27 @@ def test_comment_feishu_payload_masks_local_raw_nickname():
     assert output["ip_location"] == ""
 
 
+def test_metric_feishu_payload_includes_content_url():
+    record = MetricRecord(
+        platform=Platform.DOUYIN,
+        profile_key="%s_use_data_dir",
+        content_key="7665675303762968305",
+        title="Video",
+        content_url="https://www.douyin.com/video/7665675303762968305",
+        published_at=None,
+        snapshot_date=date(2026, 7, 24),
+        metrics={"浏览": 10, "评论": 0, "完播率": 31.2},
+    )
+
+    payload = metric_feishu_payload(record)
+
+    assert payload["作品链接"] == record.content_url
+    assert payload["浏览"] == "10"
+    assert payload["评论"] == "0"
+    assert payload["完播率_"] == "31.2%"
+    assert "完播率" not in payload
+
+
 @pytest.mark.asyncio
 async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
     rows = [
@@ -94,11 +116,13 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
             id=1,
             target_table="xhs_stats",
             payload_json=json.dumps({"标题": "A"}, ensure_ascii=False),
+            remote_record_id="",
         ),
         SimpleNamespace(
             id=2,
             target_table="xhs_stats",
             payload_json=json.dumps({"标题": "B"}, ensure_ascii=False),
+            remote_record_id="",
         ),
     ]
 
@@ -109,8 +133,8 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
         async def pending_sync(self, limit=500):
             return rows
 
-        async def mark_sync_succeeded(self, row_id):
-            self.synced.append(row_id)
+        async def mark_sync_succeeded(self, row_id, remote_record_id=""):
+            self.synced.append((row_id, remote_record_id))
 
         async def mark_sync_failed(self, row_id, error):
             raise AssertionError(error)
@@ -121,6 +145,16 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
 
         def batch_create_records(self, app_token, table_id, fields):
             self.calls.append((app_token, table_id, fields))
+            return [
+                {
+                    "data": {
+                        "records": [
+                            {"record_id": "rec-1"},
+                            {"record_id": "rec-2"},
+                        ]
+                    }
+                }
+            ]
 
     repo = Repo()
     client = Client()
@@ -129,8 +163,57 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
     summary = await syncer.deliver_pending()
 
     assert summary == SyncSummary(attempted=2, succeeded=2, failed=0)
-    assert repo.synced == [1, 2]
+    assert repo.synced == [(1, "rec-1"), (2, "rec-2")]
     assert client.calls[0][1] == "xhs-stats"
+
+
+@pytest.mark.asyncio
+async def test_outbox_synchronizer_updates_existing_remote_record(tmp_path: Path):
+    rows = [
+        SimpleNamespace(
+            id=3,
+            target_table="douyin_stats",
+            payload_json=json.dumps(
+                {"标题": "Video", "浏览": "20"},
+                ensure_ascii=False,
+            ),
+            remote_record_id="rec-existing",
+        )
+    ]
+
+    class Repo:
+        def __init__(self):
+            self.synced = []
+
+        async def pending_sync(self, limit=500):
+            return rows
+
+        async def mark_sync_succeeded(self, row_id, remote_record_id=""):
+            self.synced.append((row_id, remote_record_id))
+
+        async def mark_sync_failed(self, row_id, error):
+            raise AssertionError((row_id, error))
+
+    class Client:
+        def __init__(self):
+            self.updates = []
+
+        def batch_update_records(self, app_token, table_id, records):
+            self.updates.append((app_token, table_id, records))
+            return [{"data": {"records": [{"record_id": "rec-existing"}]}}]
+
+    repo = Repo()
+    client = Client()
+    syncer = OutboxSynchronizer(settings_for(tmp_path), client, repo)
+
+    summary = await syncer.deliver_pending()
+
+    assert summary == SyncSummary(attempted=1, succeeded=1, failed=0)
+    assert repo.synced == [(3, "")]
+    assert client.updates[0][1] == "dy-stats"
+    assert client.updates[0][2] == [
+        ("rec-existing", {"标题": "Video", "浏览": "20"})
+    ]
 
 
 @pytest.mark.asyncio

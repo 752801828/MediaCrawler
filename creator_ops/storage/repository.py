@@ -201,12 +201,18 @@ class CreatorOpsRepository:
             )
             return list(rows)
 
-    async def mark_sync_succeeded(self, outbox_id: int) -> None:
+    async def mark_sync_succeeded(
+        self,
+        outbox_id: int,
+        remote_record_id: str = "",
+    ) -> None:
         async with self.session_factory() as session:
             row = await session.get(CreatorOpsSyncOutbox, outbox_id)
             if row is None:
                 raise LookupError(f"sync outbox row not found: {outbox_id}")
             row.status = "synced"
+            if remote_record_id:
+                row.remote_record_id = remote_record_id
             row.last_error = ""
             row.synced_at = datetime.now()
             row.updated_at = row.synced_at
@@ -287,6 +293,7 @@ async def _upsert_content_snapshot(
             profile_key=record.profile_key,
             content_key=record.content_key,
             title=record.title,
+            content_url=record.content_url,
             published_at=record.published_at,
             snapshot_date=record.snapshot_date,
             metrics_json=payload,
@@ -296,6 +303,7 @@ async def _upsert_content_snapshot(
         session.add(row)
     else:
         row.title = record.title
+        row.content_url = record.content_url
         row.published_at = record.published_at
         row.metrics_json = payload
         row.updated_at = now
