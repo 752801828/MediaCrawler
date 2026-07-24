@@ -4,7 +4,6 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from creator_ops.domain import AccountProfile, Platform
 from creator_ops.platforms.base import parse_metric_number
@@ -151,7 +150,6 @@ async def test_douyin_creator_waits_for_verification_before_opening_table():
 
     await wait_for_douyin_creator_table(
         page,
-        normal_timeout_ms=5_000,
         poll_ms=1_000,
     )
 
@@ -160,12 +158,11 @@ async def test_douyin_creator_waits_for_verification_before_opening_table():
 
 
 @pytest.mark.asyncio
-async def test_douyin_creator_verification_wait_does_not_consume_normal_timeout():
+async def test_douyin_creator_waits_through_extended_verification():
     page = FakeDouyinCreatorPage(verification_polls=5)
 
     await wait_for_douyin_creator_table(
         page,
-        normal_timeout_ms=2_000,
         poll_ms=1_000,
     )
 
@@ -183,7 +180,6 @@ async def test_douyin_creator_keeps_waiting_after_verification_title_disappears(
 
     await wait_for_douyin_creator_table(
         page,
-        normal_timeout_ms=2_000,
         poll_ms=1_000,
     )
 
@@ -192,21 +188,17 @@ async def test_douyin_creator_keeps_waiting_after_verification_title_disappears(
 
 
 @pytest.mark.asyncio
-async def test_douyin_creator_normal_page_wait_has_bounded_timeout():
+async def test_douyin_creator_waits_when_task_starts_on_login_page():
     page = FakeDouyinCreatorPage(
         verification_polls=0,
         table_after_click=False,
+        table_visible_after_poll=6,
     )
 
-    with pytest.raises(
-        PlaywrightTimeoutError,
-        match="normal page timeout",
-    ):
-        await wait_for_douyin_creator_table(
-            page,
-            normal_timeout_ms=2_000,
-            poll_ms=1_000,
-        )
+    await wait_for_douyin_creator_table(
+        page,
+        poll_ms=1_000,
+    )
 
-    assert page.poll_count == 2
+    assert page.poll_count == 6
     assert page.submission_clicks == 1

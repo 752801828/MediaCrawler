@@ -20,7 +20,6 @@ from .base import (
 
 DOUYIN_CREATOR_URL = "https://creator.douyin.com/creator-micro/data-center/content"
 DOUYIN_CREATOR_TABLE_SELECTOR = "tr.douyin-creator-pc-table-row"
-DOUYIN_NORMAL_TABLE_WAIT_MS = 30_000
 DOUYIN_VERIFICATION_POLL_MS = 1_000
 RowSource = Callable[[AccountProfile], AsyncIterator[list[dict[str, Any]]]]
 
@@ -144,31 +143,25 @@ class DouyinCreatorCollector:
 async def wait_for_douyin_creator_table(
     page: Any,
     *,
-    normal_timeout_ms: int = DOUYIN_NORMAL_TABLE_WAIT_MS,
     poll_ms: int = DOUYIN_VERIFICATION_POLL_MS,
 ) -> None:
     utils.logger.info(
-        "[DouyinCreatorCollector] 等待创作者数据表；"
-        "如出现身份验证，浏览器将保持开启，完成后自动继续"
+        "[DouyinCreatorCollector] 持续等待创作者数据表；"
+        "登录、短信或身份验证期间浏览器不会自动关闭，"
+        "按 Ctrl+C 可停止任务"
     )
     submission_tab = page.get_by_text("投稿列表", exact=True)
     verification_title = page.get_by_text("身份验证", exact=True)
-    manual_login_mode = False
+    verification_logged = False
     submission_clicked = False
-    normal_attempts = max(
-        1,
-        (normal_timeout_ms + poll_ms - 1) // poll_ms,
-    )
-    remaining_attempts = normal_attempts
 
-    while manual_login_mode or remaining_attempts > 0:
+    while True:
         table = page.locator(DOUYIN_CREATOR_TABLE_SELECTOR)
         if await table.count() and await table.first.is_visible():
-            if manual_login_mode:
-                utils.logger.info(
-                    "[DouyinCreatorCollector] 已进入投稿数据表，"
-                    "人工登录完成"
-                )
+            utils.logger.info(
+                "[DouyinCreatorCollector] 已进入投稿数据表，"
+                "开始采集"
+            )
             return
 
         verification_visible = (
@@ -176,13 +169,13 @@ async def wait_for_douyin_creator_table(
             and await verification_title.first.is_visible()
         )
         if verification_visible:
-            if not manual_login_mode:
+            if not verification_logged:
                 utils.logger.info(
                     "[DouyinCreatorCollector] 检测到身份验证，"
                     "浏览器将持续保持开启，直到投稿数据表出现；"
                     "按 Ctrl+C 可停止任务"
                 )
-                manual_login_mode = True
+                verification_logged = True
             submission_clicked = False
         else:
             if (
@@ -200,11 +193,5 @@ async def wait_for_douyin_creator_table(
                     pass
                 else:
                     submission_clicked = True
-            if not manual_login_mode:
-                remaining_attempts -= 1
 
         await page.wait_for_timeout(poll_ms)
-
-    raise PlaywrightTimeoutError(
-        "Douyin creator table did not appear within the normal page timeout"
-    )
