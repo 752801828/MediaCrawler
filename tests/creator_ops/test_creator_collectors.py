@@ -105,7 +105,10 @@ class FakeDouyinLocator:
 
     async def is_visible(self):
         if self.kind == "table":
-            return self.page.table_visible
+            return self.page.table_visible or (
+                self.page.table_visible_after_poll is not None
+                and self.page.poll_count >= self.page.table_visible_after_poll
+            )
         if self.kind == "verification":
             return self.page.poll_count < self.page.verification_polls
         return True
@@ -117,9 +120,16 @@ class FakeDouyinLocator:
 
 
 class FakeDouyinCreatorPage:
-    def __init__(self, verification_polls, *, table_after_click=True):
+    def __init__(
+        self,
+        verification_polls,
+        *,
+        table_after_click=True,
+        table_visible_after_poll=None,
+    ):
         self.verification_polls = verification_polls
         self.table_after_click = table_after_click
+        self.table_visible_after_poll = table_visible_after_poll
         self.poll_count = 0
         self.submission_clicks = 0
         self.table_visible = False
@@ -152,6 +162,24 @@ async def test_douyin_creator_waits_for_verification_before_opening_table():
 @pytest.mark.asyncio
 async def test_douyin_creator_verification_wait_does_not_consume_normal_timeout():
     page = FakeDouyinCreatorPage(verification_polls=5)
+
+    await wait_for_douyin_creator_table(
+        page,
+        normal_timeout_ms=2_000,
+        poll_ms=1_000,
+    )
+
+    assert page.poll_count == 6
+    assert page.submission_clicks == 1
+
+
+@pytest.mark.asyncio
+async def test_douyin_creator_keeps_waiting_after_verification_title_disappears():
+    page = FakeDouyinCreatorPage(
+        verification_polls=1,
+        table_after_click=False,
+        table_visible_after_poll=6,
+    )
 
     await wait_for_douyin_creator_table(
         page,

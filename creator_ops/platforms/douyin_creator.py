@@ -153,8 +153,7 @@ async def wait_for_douyin_creator_table(
     )
     submission_tab = page.get_by_text("投稿列表", exact=True)
     verification_title = page.get_by_text("身份验证", exact=True)
-    verification_logged = False
-    verification_was_visible = False
+    manual_login_mode = False
     submission_clicked = False
     normal_attempts = max(
         1,
@@ -162,9 +161,14 @@ async def wait_for_douyin_creator_table(
     )
     remaining_attempts = normal_attempts
 
-    while remaining_attempts > 0:
+    while manual_login_mode or remaining_attempts > 0:
         table = page.locator(DOUYIN_CREATOR_TABLE_SELECTOR)
         if await table.count() and await table.first.is_visible():
+            if manual_login_mode:
+                utils.logger.info(
+                    "[DouyinCreatorCollector] 已进入投稿数据表，"
+                    "人工登录完成"
+                )
             return
 
         verification_visible = (
@@ -172,24 +176,15 @@ async def wait_for_douyin_creator_table(
             and await verification_title.first.is_visible()
         )
         if verification_visible:
-            if not verification_logged:
+            if not manual_login_mode:
                 utils.logger.info(
                     "[DouyinCreatorCollector] 检测到身份验证，"
-                    "浏览器将持续保持开启；完成验证后自动继续，"
+                    "浏览器将持续保持开启，直到投稿数据表出现；"
                     "按 Ctrl+C 可停止任务"
                 )
-                verification_logged = True
-            verification_was_visible = True
+                manual_login_mode = True
+            submission_clicked = False
         else:
-            if verification_was_visible:
-                utils.logger.info(
-                    "[DouyinCreatorCollector] 身份验证已完成，"
-                    "继续加载投稿列表"
-                )
-                verification_was_visible = False
-                submission_clicked = False
-                remaining_attempts = normal_attempts
-
             if (
                 not submission_clicked
                 and await submission_tab.count()
@@ -205,7 +200,8 @@ async def wait_for_douyin_creator_table(
                     pass
                 else:
                     submission_clicked = True
-            remaining_attempts -= 1
+            if not manual_login_mode:
+                remaining_attempts -= 1
 
         await page.wait_for_timeout(poll_ms)
 
