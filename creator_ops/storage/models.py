@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 
 from database.models import Base
 
@@ -129,3 +130,61 @@ class CreatorOpsSyncOutbox(Base):
     created_at = Column(DateTime, nullable=False)
     updated_at = Column(DateTime, nullable=False)
     synced_at = Column(DateTime)
+
+
+class DouyinTagAweme(Base):
+    __tablename__ = "douyin_tag_aweme"
+    __table_args__ = (
+        UniqueConstraint(
+            "tag_id",
+            "aweme_id",
+            "author_id",
+            name="uq_douyin_tag_aweme_identity",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True)
+    tag_id = Column(String(64), nullable=False, index=True)
+    tag_name = Column(Text, nullable=False, default="")
+    tag_url = Column(Text, nullable=False, default="")
+    aweme_id = Column(String(64), nullable=False, index=True)
+    author_id = Column(String(255), nullable=False, index=True)
+    sec_uid = Column(String(255), nullable=False, default="", index=True)
+    source_cursor = Column(BigInteger, nullable=False, default=0)
+
+    title = Column(Text, nullable=False, default="")
+    description = Column(Text, nullable=False, default="")
+    aweme_type = Column(Integer)
+    media_type = Column(Integer)
+    published_at = Column(DateTime, index=True)
+    region = Column(String(64), nullable=False, default="")
+    share_url = Column(Text, nullable=False, default="")
+
+    duration_ms = Column(BigInteger)
+    width = Column(Integer)
+    height = Column(Integer)
+    cover_url = Column(Text, nullable=False, default="")
+    play_url = Column(Text, nullable=False, default="")
+
+    author_nickname = Column(Text, nullable=False, default="")
+    author_account_region = Column(String(64), nullable=False, default="")
+    author_custom_verify = Column(Text, nullable=False, default="")
+    author_enterprise_verify_reason = Column(Text, nullable=False, default="")
+    author_follower_count = Column(BigInteger)
+    author_following_count = Column(BigInteger)
+    author_total_favorited = Column(BigInteger)
+
+    play_count = Column(BigInteger)
+    digg_count = Column(BigInteger)
+    comment_count = Column(BigInteger)
+    share_count = Column(BigInteger)
+    collect_count = Column(BigInteger)
+    exposure_count = Column(BigInteger)
+    recommend_count = Column(BigInteger)
+
+    text_extra_json = Column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
+    video_tag_json = Column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
+    raw_aweme_json = Column(Text().with_variant(LONGTEXT, "mysql"), nullable=False)
+    fetched_at = Column(DateTime, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False)
+    updated_at = Column(DateTime, nullable=False)

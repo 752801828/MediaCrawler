@@ -5,7 +5,9 @@ from .models import (
     CreatorOpsSyncOutbox,
     CreatorOpsTask,
     CreatorPublicContentSnapshot,
+    DouyinTagAweme,
 )
+from .douyin_tag_repository import DouyinTagRepository
 from .repository import CreatorOpsRepository
 
 __all__ = [
@@ -16,4 +18,6 @@ __all__ = [
     "CreatorOpsSyncOutbox",
     "CreatorOpsTask",
     "CreatorPublicContentSnapshot",
+    "DouyinTagAweme",
+    "DouyinTagRepository",
 ]

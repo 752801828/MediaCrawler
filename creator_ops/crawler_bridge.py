@@ -10,6 +10,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import config
 from playwright.async_api import Error as PlaywrightError
 
+from creator_ops.douyin_tags import extract_douyin_tag_aweme
 from creator_ops.domain import Platform, Task, TaskKind
 from tools import utils
 
@@ -86,11 +87,14 @@ async def run_public_task(
     *,
     crawler_factory: Callable[[str], Any] | None = None,
     init_db: Callable[[str], Any] | None = None,
+    tag_repository: Any | None = None,
 ) -> None:
     if task.kind is TaskKind.CONTENT_DETAIL:
         crawler_type = "detail"
     elif task.kind is TaskKind.CREATOR_CONTENT:
         crawler_type = "creator"
+    elif task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+        crawler_type = "tag"
     else:
         raise ValueError(f"unsupported public crawler task: {task.kind.value}")
 
@@ -102,6 +106,10 @@ async def run_public_task(
         from database.db import init_db as upstream_init_db
 
         init_db = upstream_init_db
+    if task.kind is TaskKind.DOUYIN_TAG_CONTENT and tag_repository is None:
+        from creator_ops.storage import DouyinTagRepository
+
+        tag_repository = DouyinTagRepository()
 
     profile_template = _absolute_profile_template(
         task.profile.path.parent,
@@ -117,6 +125,30 @@ async def run_public_task(
         _emit_task_banner(task)
         await init_db("db")
         crawler = crawler_factory(task.platform.value)
+        if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+            crawler.tag_targets = task.tag_targets
+
+            async def save_tag_page(target, cursor, aweme_list):
+                rows = []
+                for aweme in aweme_list:
+                    try:
+                        rows.append(
+                            extract_douyin_tag_aweme(
+                                target,
+                                aweme,
+                                source_cursor=cursor,
+                            )
+                        )
+                    except ValueError as exc:
+                        utils.logger.warning(
+                            "[creator_ops.run_public_task] Skip Tag aweme %s: %s",
+                            aweme.get("aweme_id", "unknown"),
+                            exc,
+                        )
+                if rows:
+                    await tag_repository.upsert_many(rows)
+
+            crawler.tag_page_callback = save_tag_page
         try:
             await crawler.start()
         finally:
@@ -140,6 +172,8 @@ def _format_task_banner(task: Task) -> str:
         task_label = "作品详情 + 评论" if task.get_comments else "作品详情"
     elif task.kind is TaskKind.CREATOR_CONTENT:
         task_label = "创作者作品"
+    elif task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+        task_label = "抖音 Tag 作品"
     else:
         task_label = task.kind.value
 
@@ -154,6 +188,13 @@ def _format_task_banner(task: Task) -> str:
         comments_enabled=task.get_comments,
     )
 
+    display_targets = list(task.targets)
+    if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+        display_targets = [
+            f"{target.tag_name} | {target.tag_id} | {target.tag_url}"
+            for target in task.tag_targets
+        ]
+
     lines = [
         "=" * 60,
         "【即将执行任务】",
@@ -162,13 +203,13 @@ def _format_task_banner(task: Task) -> str:
         f"账号类型：{role_label}",
         f"账号模板：{task.profile.template}",
         f"账号目录：{task.profile.path.resolve()}",
-        f"目标数量：{len(task.targets)}",
+        f"目标数量：{len(display_targets)}",
         "目标：",
     ]
-    if task.targets:
+    if display_targets:
         lines.extend(
             f"  {index}. {_sanitize_display_target(target)}"
-            for index, target in enumerate(task.targets, start=1)
+            for index, target in enumerate(display_targets, start=1)
         )
     else:
         lines.append("  （无）")
@@ -180,6 +221,8 @@ def _format_task_banner(task: Task) -> str:
             "=" * 60,
         ]
     )
+    if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+        lines.insert(-1, "数据表：douyin_tag_aweme")
     return "\n".join(lines)
 
 

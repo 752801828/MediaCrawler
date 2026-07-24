@@ -41,6 +41,7 @@ class FeishuSettings:
     xhs_creator_table_id: str
     history_view_id: str
     douyin_comment_table_id: str = ""
+    douyin_tag_table_id: str = "tblEBAE044RsVURX"
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,10 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
             xhs_creator_table_id=values["FEISHU_XHS_CREATOR_TABLE_ID"],
             history_view_id=values["FEISHU_HISTORY_VIEW_ID"],
             douyin_comment_table_id=values.get("FEISHU_DOUYIN_COMMENT_TABLE_ID", ""),
+            douyin_tag_table_id=values.get(
+                "FEISHU_DOUYIN_TAG_TABLE_ID",
+                "tblEBAE044RsVURX",
+            ),
         ),
     )
 

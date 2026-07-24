@@ -250,6 +250,88 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         headers["Referer"] = urllib.parse.quote(referer_url, safe=':/')
         return await self.get(uri, params)
 
+    async def get_tag_aweme_page(
+        self,
+        *,
+        tag_id: str,
+        tag_url: str,
+        cursor: int = 0,
+        count: int = 12,
+    ) -> Dict:
+        uri = "/aweme/v1/web/challenge/aweme/"
+        params = {
+            "ch_id": tag_id,
+            "query_type": 0,
+            "sort_type": 0,
+            "offset": cursor,
+            "cursor": cursor,
+            "count": count,
+            "support_h265": 1,
+            "support_dash": 0,
+        }
+        headers = copy.copy(self.headers)
+        headers["Host"] = "www-hj.douyin.com"
+        headers["Origin"] = "https://www.douyin.com/"
+        headers["Referer"] = tag_url
+        await self.__process_req_params(uri, params, headers)
+        return await self.request(
+            method="GET",
+            url=f"https://www-hj.douyin.com{uri}",
+            params=params,
+            headers=headers,
+        )
+
+    async def get_tag_all_awemes(
+        self,
+        *,
+        tag_id: str,
+        tag_url: str,
+        crawl_interval: float = 1.0,
+        callback: Optional[Callable] = None,
+        collect_result: bool = True,
+    ) -> list[tuple[int, Dict]]:
+        cursor = 0
+        seen_cursors: set[int] = set()
+        result: list[tuple[int, Dict]] = []
+        total_count = 0
+        while True:
+            if cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[DouYinClient.get_tag_all_awemes] Repeated cursor {cursor} "
+                    f"for tag_id={tag_id}; stop pagination"
+                )
+                break
+            seen_cursors.add(cursor)
+            requested_cursor = cursor
+            response = await self.get_tag_aweme_page(
+                tag_id=tag_id,
+                tag_url=tag_url,
+                cursor=requested_cursor,
+            )
+            status_code = int(response.get("status_code") or 0)
+            if status_code != 0:
+                raise DataFetchError(
+                    f"douyin tag API failed with status_code={status_code}"
+                )
+            aweme_list = response.get("aweme_list") or []
+            utils.logger.info(
+                f"[DouYinClient.get_tag_all_awemes] tag_id={tag_id}, "
+                f"cursor={requested_cursor}, awemes={len(aweme_list)}, "
+                f"total={total_count + len(aweme_list)}"
+            )
+            if not aweme_list:
+                break
+            total_count += len(aweme_list)
+            if collect_result:
+                result.extend((requested_cursor, item) for item in aweme_list)
+            if callback:
+                await callback(tag_id, requested_cursor, aweme_list)
+            if not response.get("has_more"):
+                break
+            cursor = int(response.get("cursor") or 0)
+            await asyncio.sleep(crawl_interval)
+        return result
+
     async def get_aweme_all_comments(
         self,
         aweme_id: str,

@@ -143,3 +143,75 @@ def test_user_task_never_persists_public_profile(tmp_path: Path):
     assert plan[0].kind is TaskKind.CREATOR_CONTENT
     assert plan[0].targets == ("public-user-id",)
     assert plan[0].persist_profile is False
+
+
+def test_tag_records_are_deduplicated_and_use_douyin_water_account(tmp_path: Path):
+    accounts = [
+        {
+            "fields": {
+                "ID": "%s_use_data_dir",
+                "平台": "抖音",
+                "主账号": True,
+                "水号": False,
+            }
+        },
+        {
+            "fields": {
+                "ID": "%s_use_data_dir",
+                "平台": "抖音",
+                "主账号": False,
+                "水号": True,
+            }
+        },
+    ]
+    tags = [
+        {
+            "record_id": "tag-1",
+            "fields": {
+                "tag": "#越野射灯",
+                "链接": "https://www.douyin.com/hashtag/7322391300177987638",
+            },
+        },
+        {
+            "record_id": "tag-2",
+            "fields": {
+                "tag": "duplicate",
+                "链接": "https://www.douyin.com/hashtag/7322391300177987638?from=web",
+            },
+        },
+    ]
+
+    plan = build_plan(settings_for(tmp_path), accounts, [], [], tags)
+    tag_tasks = [task for task in plan if task.kind is TaskKind.DOUYIN_TAG_CONTENT]
+
+    assert len(tag_tasks) == 1
+    assert tag_tasks[0].profile.is_water is True
+    assert tag_tasks[0].profile.is_main is False
+    assert tag_tasks[0].tag_targets[0].tag_id == "7322391300177987638"
+
+
+def test_tag_task_never_falls_back_to_main_account(tmp_path: Path):
+    accounts = [
+        {
+            "fields": {
+                "ID": "%s_use_data_dir",
+                "平台": "抖音",
+                "主账号": True,
+                "水号": False,
+            }
+        }
+    ]
+    tags = [
+        {
+            "fields": {
+                "tag": "tag",
+                "链接": "https://www.douyin.com/hashtag/7322391300177987638",
+            }
+        }
+    ]
+
+    import pytest
+    from creator_ops.planner import PlanningError
+
+    with pytest.raises(PlanningError, match="water account"):
+        build_plan(settings_for(tmp_path), accounts, [], [], tags)

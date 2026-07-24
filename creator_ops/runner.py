@@ -76,8 +76,8 @@ class CreatorOpsRunner:
             )
 
         try:
-            accounts, links, users = self._load_control_records()
-            plan = build_plan(self.settings, accounts, links, users)
+            accounts, links, users, tags = self._load_control_records()
+            plan = build_plan(self.settings, accounts, links, users, tags)
         except (FeishuError, PlanningError, ValueError):
             return WorkflowSummary(exit_code=2)
 
@@ -108,7 +108,8 @@ class CreatorOpsRunner:
                         )
                 else:
                     await self.public_task_runner(task)
-                    await self.synchronizer.queue_platform_comments(task.platform)
+                    if task.kind is not TaskKind.DOUYIN_TAG_CONTENT:
+                        await self.synchronizer.queue_platform_comments(task.platform)
             except Exception as exc:
                 failed += 1
                 await self.repository.finish_task(
@@ -141,7 +142,9 @@ class CreatorOpsRunner:
             sync=sync_summary,
         )
 
-    def _load_control_records(self) -> tuple[list[dict], list[dict], list[dict]]:
+    def _load_control_records(
+        self,
+    ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
         feishu = self.settings.feishu
         accounts = self.client.iter_records(
             feishu.app_token,
@@ -158,7 +161,12 @@ class CreatorOpsRunner:
             feishu.user_table_id,
             feishu.user_view_id,
         )
-        return accounts, links, users
+        tags = self.client.iter_records(
+            feishu.app_token,
+            feishu.douyin_tag_table_id,
+            "",
+        )
+        return accounts, links, users, tags
 
     async def _run_dry(self, plan: list[Any]) -> WorkflowSummary:
         succeeded = 0

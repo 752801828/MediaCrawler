@@ -19,7 +19,8 @@
    - `dy_text_data_dir`
    - `dy_u1_data_dir`（启用时）
 3. 飞书账号池的 `ID` 继续使用 `%s_use_data_dir`、`%s_text_data_dir` 等模板。
-4. 飞书应用需要读取三张控制表及向结果表新增记录的权限。
+4. 飞书应用需要读取账号、链接、用户和抖音 Tag 控制表，并具备向既有结果表新增记录的权限。
+5. 抖音 Tag 表通过 `FEISHU_DOUYIN_TAG_TABLE_ID` 配置，默认是 `tblEBAE044RsVURX`，字段为 `tag` 和 `链接`。
 
 `.env`、`D:\browser_data`、Cookie、运行日志和诊断截图不得提交到 Git。
 
@@ -56,6 +57,16 @@ start_creator_ops.cmd
 - `0`：全部成功。
 - `1`：部分任务或同步失败，其他任务已继续执行。
 - `2`：配置、飞书控制表读取或任务规划失败，浏览器任务未启动。
+
+## 抖音 Tag 采集
+
+Tag 任务读取飞书 Tag 表中的 `https://www.douyin.com/hashtag/{ID}` 链接，自动解析 ID，并只使用账号池中标记为“水号”的抖音浏览器目录。程序从游标 0 开始持续翻页，直到接口返回结束、空页或重复游标。
+
+结果只保存到 MySQL 表 `douyin_tag_aweme`，不会写入 `douyin_aweme`，也不会生成飞书 Outbox。唯一键是：
+
+`tag_id + aweme_id + author_id`
+
+表中包含稳定的作品、作者、视频和互动字段，并在 `raw_aweme_json` 保存接口返回的单个作品完整 JSON。Cookie、`msToken`、`verifyFp`、`uifid` 和 `a_bogus` 不会进入数据库、日志或 Git。
 
 ## 分阶段运行与恢复
 

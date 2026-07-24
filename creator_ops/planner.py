@@ -5,8 +5,10 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from creator_ops.config import Settings
+from creator_ops.douyin_tags import parse_douyin_tag_target
 from creator_ops.domain import AccountProfile, Platform, Task, TaskKind
 from creator_ops.feishu.schema import PLATFORM_LABELS
+from tools import utils
 
 
 class PlanningError(ValueError):
@@ -18,6 +20,7 @@ def build_plan(
     account_records: Iterable[Mapping[str, Any]],
     link_records: Iterable[Mapping[str, Any]],
     user_records: Iterable[Mapping[str, Any]],
+    tag_records: Iterable[Mapping[str, Any]] = (),
 ) -> list[Task]:
     profiles = _parse_profiles(settings, account_records)
     main_profiles: dict[Platform, list[AccountProfile]] = defaultdict(list)
@@ -93,6 +96,39 @@ def build_plan(
                 targets=tuple(targets),
                 get_comments=False,
                 persist_profile=False,
+            )
+        )
+
+    seen_tag_ids: set[str] = set()
+    for record in tag_records:
+        fields = record.get("fields") or {}
+        try:
+            target = parse_douyin_tag_target(
+                fields.get("tag"),
+                fields.get("链接"),
+            )
+        except ValueError:
+            utils.logger.warning(
+                "[creator_ops.build_plan] Ignore invalid Douyin Tag record_id=%s",
+                record.get("record_id") or record.get("id") or "unknown",
+            )
+            continue
+        if target.tag_id in seen_tag_ids:
+            continue
+        seen_tag_ids.add(target.tag_id)
+        profile = _next_water_profile(
+            water_profiles,
+            profile_positions,
+            Platform.DOUYIN,
+        )
+        plan.append(
+            Task(
+                task_id=f"douyin-tag:{target.tag_id}",
+                platform=Platform.DOUYIN,
+                kind=TaskKind.DOUYIN_TAG_CONTENT,
+                profile=profile,
+                persist_profile=False,
+                tag_targets=(target,),
             )
         )
 

@@ -211,3 +211,83 @@ async def test_runner_continues_after_one_creator_task_fails(tmp_path: Path):
     assert "task:xhs" in events
     assert "task:dy" in events
     assert events.index("read:account") < events.index("db")
+
+
+@pytest.mark.asyncio
+async def test_tag_task_does_not_queue_comment_or_feishu_sync(tmp_path: Path):
+    settings = settings_for(tmp_path)
+    events = []
+    accounts = [
+        {
+            "fields": {
+                "ID": "%s_use_data_dir",
+                "平台": "抖音",
+                "主账号": False,
+                "水号": True,
+            }
+        }
+    ]
+    tags = [
+        {
+            "fields": {
+                "tag": "#越野射灯",
+                "链接": "https://www.douyin.com/hashtag/7322391300177987638",
+            }
+        }
+    ]
+
+    class Client:
+        def iter_records(self, _app, table, _view):
+            if table == "account":
+                return accounts
+            if table == settings.feishu.douyin_tag_table_id:
+                return tags
+            return []
+
+    class Repo:
+        async def create_run(self, _uuid):
+            return 1
+
+        async def start_task(self, _run_id, task):
+            events.append(f"task:{task.kind.value}")
+            return 1
+
+        async def finish_task(self, _task_id, *, success, error=""):
+            events.append(f"finish:{success}")
+
+        async def finish_run(self, *args, **kwargs):
+            events.append(f"run:{kwargs['status']}")
+
+    class Syncer:
+        async def queue_platform_comments(self, _platform):
+            raise AssertionError("Tag task must not queue comment sync")
+
+        async def deliver_pending(self):
+            raise AssertionError("collect-only must not write Feishu")
+
+    async def public_task_runner(task):
+        events.append(f"public:{task.kind.value}")
+
+    async def init_db(_db_type):
+        events.append("db")
+
+    runner = CreatorOpsRunner(
+        settings,
+        client=Client(),
+        repository=Repo(),
+        synchronizer=Syncer(),
+        public_task_runner=public_task_runner,
+        init_db=init_db,
+    )
+
+    summary = await runner.run(collect_only=True)
+
+    assert summary.exit_code == 0
+    assert summary.total_tasks == 1
+    assert events == [
+        "db",
+        "task:douyin_tag_content",
+        "public:douyin_tag_content",
+        "finish:True",
+        "run:succeeded",
+    ]

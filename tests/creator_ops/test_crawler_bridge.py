@@ -9,7 +9,13 @@ from creator_ops.crawler_bridge import (
     crawler_config_scope,
     run_public_task,
 )
-from creator_ops.domain import AccountProfile, Platform, Task, TaskKind
+from creator_ops.domain import (
+    AccountProfile,
+    DouyinTagTarget,
+    Platform,
+    Task,
+    TaskKind,
+)
 
 
 def test_crawler_config_scope_restores_globals_after_error():
@@ -250,3 +256,97 @@ async def test_run_public_task_preserves_start_error_when_browser_already_closed
             crawler_factory=lambda _platform: FakeCrawler(),
             init_db=fake_init_db,
         )
+
+
+@pytest.mark.asyncio
+async def test_tag_task_uses_independent_repository_and_tag_callback():
+    saved_rows = []
+    events = []
+
+    class TagRepository:
+        async def upsert_many(self, rows):
+            saved_rows.extend(rows)
+
+    class FakeCrawler:
+        async def start(self):
+            events.append("start")
+            target = self.tag_targets[0]
+            await self.tag_page_callback(
+                target,
+                0,
+                [
+                    {
+                        "aweme_id": "aweme-1",
+                        "author": {"uid": "author-1", "sec_uid": "sec-1"},
+                        "statistics": {"play_count": 100},
+                    }
+                ],
+            )
+
+        async def close(self):
+            events.append("close")
+
+    async def fake_init_db(_db_type):
+        events.append("db")
+
+    task = Task(
+        task_id="douyin-tag:7322391300177987638",
+        platform=Platform.DOUYIN,
+        kind=TaskKind.DOUYIN_TAG_CONTENT,
+        profile=AccountProfile(
+            platform=Platform.DOUYIN,
+            template="dy_text_data_dir",
+            path=Path("D:/browser_data/dy_text_data_dir"),
+            is_main=False,
+            is_water=True,
+        ),
+        tag_targets=(
+            DouyinTagTarget(
+                tag_id="7322391300177987638",
+                tag_name="#越野射灯",
+                tag_url="https://www.douyin.com/hashtag/7322391300177987638",
+            ),
+        ),
+    )
+
+    await run_public_task(
+        task,
+        crawler_factory=lambda _platform: FakeCrawler(),
+        init_db=fake_init_db,
+        tag_repository=TagRepository(),
+    )
+
+    assert events == ["db", "start", "close"]
+    assert saved_rows[0]["tag_id"] == "7322391300177987638"
+    assert saved_rows[0]["aweme_id"] == "aweme-1"
+    assert saved_rows[0]["author_id"] == "author-1"
+
+
+def test_tag_task_banner_identifies_water_profile_and_target():
+    task = Task(
+        task_id="douyin-tag:7322391300177987638",
+        platform=Platform.DOUYIN,
+        kind=TaskKind.DOUYIN_TAG_CONTENT,
+        profile=AccountProfile(
+            platform=Platform.DOUYIN,
+            template="dy_text_data_dir",
+            path=Path("D:/browser_data/dy_text_data_dir"),
+            is_main=False,
+            is_water=True,
+        ),
+        tag_targets=(
+            DouyinTagTarget(
+                tag_id="7322391300177987638",
+                tag_name="#越野射灯",
+                tag_url="https://www.douyin.com/hashtag/7322391300177987638",
+            ),
+        ),
+    )
+
+    banner = _format_task_banner(task)
+
+    assert "抖音 Tag 作品" in banner
+    assert "账号类型：水号" in banner
+    assert "7322391300177987638" in banner
+    assert "#越野射灯" in banner
+    assert "douyin_tag_aweme" in banner

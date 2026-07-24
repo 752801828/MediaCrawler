@@ -121,8 +121,36 @@ class DouYinCrawler(AbstractCrawler):
             elif config.CRAWLER_TYPE == "creator":
                 # Get the information and comments of the specified creator
                 await self.get_creators_and_videos()
+            elif config.CRAWLER_TYPE == "tag":
+                await self.get_tag_awemes()
 
             utils.logger.info("[DouYinCrawler.start] Douyin Crawler finished ...")
+
+    async def get_tag_awemes(self) -> None:
+        targets = getattr(self, "tag_targets", ())
+        callback = getattr(self, "tag_page_callback", None)
+        if not targets or callback is None:
+            raise ValueError("douyin tag task is missing targets or storage callback")
+        for target in targets:
+            utils.logger.info(
+                f"[DouYinCrawler.get_tag_awemes] Begin tag_id={target.tag_id}, "
+                f"tag_name={target.tag_name}"
+            )
+            await self.context_page.goto(
+                target.tag_url,
+                wait_until="domcontentloaded",
+            )
+
+            async def save_page(_tag_id, cursor, aweme_list, *, current=target):
+                await callback(current, cursor, aweme_list)
+
+            await self.dy_client.get_tag_all_awemes(
+                tag_id=target.tag_id,
+                tag_url=target.tag_url,
+                crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+                callback=save_page,
+                collect_result=False,
+            )
 
     async def search(self) -> None:
         utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")
