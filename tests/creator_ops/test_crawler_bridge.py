@@ -18,6 +18,7 @@ def test_crawler_config_scope_restores_globals_after_error():
         "CRAWLER_TYPE": config.CRAWLER_TYPE,
         "USER_DATA_DIR": config.USER_DATA_DIR,
         "SAVE_DATA_OPTION": config.SAVE_DATA_OPTION,
+        "ENABLE_GET_SUB_COMMENTS": config.ENABLE_GET_SUB_COMMENTS,
         "XHS_SPECIFIED_NOTE_URL_LIST": list(config.XHS_SPECIFIED_NOTE_URL_LIST),
     }
 
@@ -32,11 +33,40 @@ def test_crawler_config_scope_restores_globals_after_error():
             assert config.PLATFORM == "xhs"
             assert config.CRAWLER_TYPE == "detail"
             assert config.SAVE_DATA_OPTION == "db"
+            assert config.is_get_sub_comments_enabled("xhs") is True
             assert config.XHS_SPECIFIED_NOTE_URL_LIST == ["note-1"]
             raise RuntimeError("stop")
 
     for name, value in original.items():
         assert getattr(config, name) == value
+
+
+@pytest.mark.parametrize(
+    ("platform", "expected"),
+    [(Platform.XHS, True), (Platform.DOUYIN, True)],
+)
+def test_crawler_scope_enables_sub_comments_for_supported_platforms(
+    platform, expected
+):
+    with crawler_config_scope(
+        platform=platform,
+        crawler_type="detail",
+        user_data_dir="%s_text_data_dir",
+        targets=("target-1",),
+        get_comments=True,
+    ):
+        assert config.is_get_sub_comments_enabled(platform.value) is expected
+
+
+def test_crawler_scope_disables_sub_comments_when_comments_are_disabled():
+    with crawler_config_scope(
+        platform=Platform.DOUYIN,
+        crawler_type="detail",
+        user_data_dir="%s_text_data_dir",
+        targets=("target-1",),
+        get_comments=False,
+    ):
+        assert config.is_get_sub_comments_enabled("dy") is False
 
 
 @pytest.mark.asyncio

@@ -293,21 +293,37 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                 continue
             # Get secondary reviews
             for comment in comments:
-                reply_comment_total = comment.get("reply_comment_total")
+                reply_comment_total = comment.get("reply_comment_total") or 0
 
                 if reply_comment_total > 0:
                     comment_id = comment.get("cid")
                     sub_comments_has_more = 1
                     sub_comments_cursor = 0
+                    seen_sub_comment_cursors = set()
 
                     while sub_comments_has_more:
-                        sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
+                        if sub_comments_cursor in seen_sub_comment_cursors:
+                            utils.logger.warning(
+                                f"[DouYinClient.get_aweme_all_comments] Repeated sub-comment cursor "
+                                f"{sub_comments_cursor} for aweme_id={aweme_id}, "
+                                f"root_comment_id={comment_id}; stop pagination"
+                            )
+                            break
+                        seen_sub_comment_cursors.add(sub_comments_cursor)
+                        requested_cursor = sub_comments_cursor
+                        sub_comments_res = await self.get_sub_comments(
+                            aweme_id, comment_id, requested_cursor
+                        )
                         sub_comments_has_more = sub_comments_res.get("has_more", 0)
                         sub_comments_cursor = sub_comments_res.get("cursor", 0)
                         sub_comments = sub_comments_res.get("comments", [])
-
+                        utils.logger.info(
+                            f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id}, "
+                            f"root_comment_id={comment_id}, cursor={requested_cursor}, "
+                            f"sub_comments={len(sub_comments)}"
+                        )
                         if not sub_comments:
-                            continue
+                            break
                         result.extend(sub_comments)
                         if callback:  # If there is a callback function, execute the callback function
                             await callback(aweme_id, sub_comments)

@@ -262,7 +262,7 @@ class DouYinCrawler(AbstractCrawler):
                 await self.dy_client.get_aweme_all_comments(
                     aweme_id=aweme_id,
                     crawl_interval=crawl_interval,
-                    is_fetch_sub_comments=config.ENABLE_GET_SUB_COMMENTS,
+                    is_fetch_sub_comments=config.is_get_sub_comments_enabled("dy"),
                     callback=douyin_store.batch_update_dy_aweme_comments,
                 )
                 # Sleep after fetching comments

@@ -115,9 +115,12 @@ ENABLE_GET_COMMENTS = True
 # Deprecated compatibility value. First-level comments are crawled until the platform reports the end.
 CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 
-# Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
+# Whether to enable the mode of crawling second-level comments.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = False
+ENABLE_GET_SUB_COMMENTS = True
+
+# Platforms allowed to crawl second-level comments.
+ENABLE_GET_SUB_COMMENTS_PLATFORMS = ("xhs", "dy")
 
 # word cloud related
 # Whether to enable generating comment word clouds

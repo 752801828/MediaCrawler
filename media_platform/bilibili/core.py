@@ -325,7 +325,7 @@ class BilibiliCrawler(AbstractCrawler):
                 await self.bili_client.get_video_all_comments(
                     video_id=video_id,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
-                    is_fetch_sub_comments=config.ENABLE_GET_SUB_COMMENTS,
+                    is_fetch_sub_comments=config.is_get_sub_comments_enabled("bili"),
                     callback=bilibili_store.batch_update_bilibili_video_comments,
                 )
 

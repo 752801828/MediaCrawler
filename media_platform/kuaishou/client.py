@@ -281,7 +281,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
             List of sub comments
         """
-        if not config.ENABLE_GET_SUB_COMMENTS:
+        if not config.is_get_sub_comments_enabled("ks"):
             utils.logger.info(
                 f"[KuaiShouClient.get_comments_all_sub_comments] Crawling sub_comment mode is not enabled"
             )

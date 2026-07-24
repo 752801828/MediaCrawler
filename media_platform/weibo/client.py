@@ -251,7 +251,7 @@ class WeiboClient(ProxyRefreshMixin):
         Returns:
 
         """
-        if not config.ENABLE_GET_SUB_COMMENTS:
+        if not config.is_get_sub_comments_enabled("wb"):
             utils.logger.info(f"[WeiboClient.get_comments_all_sub_comments] Crawling sub_comment mode is not enabled")
             return []
 

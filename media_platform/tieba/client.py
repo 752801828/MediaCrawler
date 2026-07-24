@@ -525,7 +525,7 @@ class BaiduTieBaClient(AbstractApiClient):
         Returns:
             List[TiebaComment]: Sub-comment list
         """
-        if not config.ENABLE_GET_SUB_COMMENTS:
+        if not config.is_get_sub_comments_enabled("tieba"):
             return []
 
         if not self.playwright_page:

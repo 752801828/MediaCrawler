@@ -478,7 +478,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
 
         """
-        if not config.ENABLE_GET_SUB_COMMENTS:
+        if not config.is_get_sub_comments_enabled("xhs"):
             utils.logger.info(
                 f"[XiaoHongShuCrawler.get_comments_all_sub_comments] Crawling sub_comment mode is not enabled"
             )
@@ -498,15 +498,26 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
 
                 root_comment_id = comment.get("id")
                 sub_comment_cursor = comment.get("sub_comment_cursor")
+                seen_sub_comment_cursors = set()
 
                 while sub_comment_has_more:
                     try:
+                        if sub_comment_cursor in seen_sub_comment_cursors:
+                            utils.logger.warning(
+                                f"[XiaoHongShuClient.get_comments_all_sub_comments] "
+                                f"Repeated sub-comment cursor {sub_comment_cursor} for "
+                                f"note_id={note_id}, root_comment_id={root_comment_id}; "
+                                f"stop pagination"
+                            )
+                            break
+                        seen_sub_comment_cursors.add(sub_comment_cursor)
+                        requested_cursor = sub_comment_cursor
                         comments_res = await self.get_note_sub_comments(
                             note_id=note_id,
                             root_comment_id=root_comment_id,
                             xsec_token=xsec_token,
                             num=10,
-                            cursor=sub_comment_cursor,
+                            cursor=requested_cursor,
                         )
 
                         if comments_res is None:
@@ -522,6 +533,13 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                             )
                             break
                         comments = comments_res["comments"]
+                        utils.logger.info(
+                            f"[XiaoHongShuClient.get_comments_all_sub_comments] "
+                            f"note_id={note_id}, root_comment_id={root_comment_id}, "
+                            f"cursor={requested_cursor}, sub_comments={len(comments)}"
+                        )
+                        if not comments:
+                            break
                         if callback:
                             await callback(note_id, comments)
                         await asyncio.sleep(crawl_interval)

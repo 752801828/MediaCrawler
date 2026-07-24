@@ -20,6 +20,7 @@ _SCOPED_CONFIG_NAMES = (
     "USER_DATA_DIR",
     "SAVE_DATA_OPTION",
     "ENABLE_GET_COMMENTS",
+    "ENABLE_GET_SUB_COMMENTS",
     "ENABLE_CDP_MODE",
     "HEADLESS",
     "CDP_HEADLESS",
@@ -60,6 +61,7 @@ def crawler_config_scope(
         config.USER_DATA_DIR = user_data_dir
         config.SAVE_DATA_OPTION = "db"
         config.ENABLE_GET_COMMENTS = get_comments
+        config.ENABLE_GET_SUB_COMMENTS = True
         config.ENABLE_CDP_MODE = False
         config.HEADLESS = False
         config.CDP_HEADLESS = False
@@ -147,8 +149,9 @@ def _format_task_banner(task: Task) -> str:
     if task.profile.is_water:
         roles.append("水号")
     role_label = " / ".join(roles) if roles else "未标记"
-    sub_comments_enabled = bool(
-        task.get_comments and config.ENABLE_GET_SUB_COMMENTS
+    sub_comments_enabled = config.is_get_sub_comments_enabled(
+        task.platform.value,
+        comments_enabled=task.get_comments,
     )
 
     lines = [
