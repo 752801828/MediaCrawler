@@ -532,7 +532,7 @@ class XiaoHongShuClient(AbstractApiClient, ProxyRefreshMixin):
                                 f"[XiaoHongShuClient.get_comments_all_sub_comments] No 'comments' key found in response: {comments_res}"
                             )
                             break
-                        comments = comments_res["comments"]
+                        comments = comments_res["comments"] or []
                         utils.logger.info(
                             f"[XiaoHongShuClient.get_comments_all_sub_comments] "
                             f"note_id={note_id}, root_comment_id={root_comment_id}, "

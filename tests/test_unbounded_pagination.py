@@ -130,6 +130,32 @@ async def test_douyin_stops_sub_comments_on_empty_page():
 
 
 @pytest.mark.asyncio
+async def test_douyin_stops_sub_comments_when_comments_are_null():
+    async def get_comments(_aweme_id, _cursor):
+        return {
+            "has_more": 0,
+            "cursor": 20,
+            "comments": [{"cid": "root", "reply_comment_total": 1}],
+        }
+
+    async def get_sub_comments(_aweme_id, _comment_id, _cursor):
+        return {"has_more": 1, "cursor": 10, "comments": None}
+
+    client = SimpleNamespace(
+        get_aweme_comments=get_comments,
+        get_sub_comments=get_sub_comments,
+    )
+    result = await DouYinClient.get_aweme_all_comments(
+        client,
+        aweme_id="aweme",
+        crawl_interval=0,
+        is_fetch_sub_comments=True,
+    )
+
+    assert [item["cid"] for item in result] == ["root"]
+
+
+@pytest.mark.asyncio
 async def test_douyin_stops_sub_comments_on_repeated_cursor():
     sub_calls = 0
 
@@ -255,6 +281,33 @@ async def test_xhs_stops_sub_comments_on_empty_page(monkeypatch):
 
     assert result == []
     assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_xhs_stops_sub_comments_when_comments_are_null(monkeypatch):
+    monkeypatch.setattr(config, "ENABLE_GET_COMMENTS", True)
+    monkeypatch.setattr(config, "ENABLE_GET_SUB_COMMENTS", True)
+
+    async def get_sub_comments(**_kwargs):
+        return {"has_more": True, "cursor": "next", "comments": None}
+
+    client = SimpleNamespace(get_note_sub_comments=get_sub_comments)
+    result = await XiaoHongShuClient.get_comments_all_sub_comments(
+        client,
+        comments=[
+            {
+                "id": "root",
+                "note_id": "note",
+                "sub_comments": [],
+                "sub_comment_has_more": True,
+                "sub_comment_cursor": "start",
+            }
+        ],
+        xsec_token="token",
+        crawl_interval=0,
+    )
+
+    assert result == []
 
 
 @pytest.mark.asyncio

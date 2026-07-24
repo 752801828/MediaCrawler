@@ -316,7 +316,7 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                         )
                         sub_comments_has_more = sub_comments_res.get("has_more", 0)
                         sub_comments_cursor = sub_comments_res.get("cursor", 0)
-                        sub_comments = sub_comments_res.get("comments", [])
+                        sub_comments = sub_comments_res.get("comments") or []
                         utils.logger.info(
                             f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id}, "
                             f"root_comment_id={comment_id}, cursor={requested_cursor}, "
