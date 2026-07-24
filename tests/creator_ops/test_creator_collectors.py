@@ -4,12 +4,14 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from creator_ops.domain import AccountProfile, Platform
 from creator_ops.platforms.base import parse_metric_number
 from creator_ops.platforms.douyin_creator import (
     DouyinCreatorCollector,
     normalize_douyin_row,
+    wait_for_douyin_creator_table,
 )
 from creator_ops.platforms.xhs_creator import XhsCreatorCollector, normalize_xhs_row
 
@@ -87,3 +89,77 @@ async def test_collectors_accept_injected_row_sources():
 
     assert [record.title for record in xhs_records] == ["笔记"]
     assert [record.title for record in douyin_records] == ["视频"]
+
+
+class FakeDouyinLocator:
+    def __init__(self, page, kind):
+        self.page = page
+        self.kind = kind
+
+    @property
+    def first(self):
+        return self
+
+    async def count(self):
+        return 1
+
+    async def is_visible(self):
+        if self.kind == "table":
+            return self.page.table_visible
+        if self.kind == "verification":
+            return self.page.poll_count < self.page.verification_polls
+        return True
+
+    async def click(self, **_kwargs):
+        self.page.submission_clicks += 1
+        self.page.table_visible = True
+
+
+class FakeDouyinCreatorPage:
+    def __init__(self, verification_polls):
+        self.verification_polls = verification_polls
+        self.poll_count = 0
+        self.submission_clicks = 0
+        self.table_visible = False
+
+    def get_by_text(self, text, **_kwargs):
+        kind = "verification" if text == "身份验证" else "submission"
+        return FakeDouyinLocator(self, kind)
+
+    def locator(self, _selector):
+        return FakeDouyinLocator(self, "table")
+
+    async def wait_for_timeout(self, _timeout):
+        self.poll_count += 1
+
+
+@pytest.mark.asyncio
+async def test_douyin_creator_waits_for_verification_before_opening_table():
+    page = FakeDouyinCreatorPage(verification_polls=2)
+
+    await wait_for_douyin_creator_table(
+        page,
+        timeout_ms=5_000,
+        poll_ms=1_000,
+    )
+
+    assert page.poll_count == 3
+    assert page.submission_clicks == 1
+
+
+@pytest.mark.asyncio
+async def test_douyin_creator_verification_wait_has_bounded_timeout():
+    page = FakeDouyinCreatorPage(verification_polls=10)
+
+    with pytest.raises(
+        PlaywrightTimeoutError,
+        match="within 2 minutes",
+    ):
+        await wait_for_douyin_creator_table(
+            page,
+            timeout_ms=2_000,
+            poll_ms=1_000,
+        )
+
+    assert page.poll_count == 2
+    assert page.submission_clicks == 0

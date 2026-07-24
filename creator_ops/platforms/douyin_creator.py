@@ -4,7 +4,10 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any, AsyncIterator
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
 from creator_ops.domain import AccountProfile, MetricRecord, Platform
+from tools import utils
 
 from .base import (
     locator_text,
@@ -16,6 +19,9 @@ from .base import (
 )
 
 DOUYIN_CREATOR_URL = "https://creator.douyin.com/creator-micro/data-center/content"
+DOUYIN_CREATOR_TABLE_SELECTOR = "tr.douyin-creator-pc-table-row"
+DOUYIN_VERIFICATION_WAIT_MS = 120_000
+DOUYIN_VERIFICATION_POLL_MS = 1_000
 RowSource = Callable[[AccountProfile], AsyncIterator[list[dict[str, Any]]]]
 
 DOUYIN_COLUMN_INDEX = {
@@ -90,13 +96,7 @@ class DouyinCreatorCollector:
         async with persistent_page(profile.path, headless=False) as page:
             try:
                 await page.goto(DOUYIN_CREATOR_URL, wait_until="domcontentloaded", timeout=60_000)
-                submission_tab = page.get_by_text("投稿列表", exact=True)
-                if await submission_tab.count():
-                    await submission_tab.first.click()
-                await page.wait_for_selector(
-                    "tr.douyin-creator-pc-table-row",
-                    timeout=30_000,
-                )
+                await wait_for_douyin_creator_table(page)
 
                 parsed_by_key: dict[str, dict[str, Any]] = {}
                 unchanged = 0
@@ -139,3 +139,56 @@ class DouyinCreatorCollector:
                 )
             rows.append(parsed)
         return rows
+
+
+async def wait_for_douyin_creator_table(
+    page: Any,
+    *,
+    timeout_ms: int = DOUYIN_VERIFICATION_WAIT_MS,
+    poll_ms: int = DOUYIN_VERIFICATION_POLL_MS,
+) -> None:
+    utils.logger.info(
+        "[DouyinCreatorCollector] 等待创作者数据表；"
+        "如出现身份验证，请在 2 分钟内完成"
+    )
+    submission_tab = page.get_by_text("投稿列表", exact=True)
+    verification_title = page.get_by_text("身份验证", exact=True)
+    verification_logged = False
+    submission_clicked = False
+    attempts = max(1, (timeout_ms + poll_ms - 1) // poll_ms)
+
+    for _ in range(attempts):
+        table = page.locator(DOUYIN_CREATOR_TABLE_SELECTOR)
+        if await table.count() and await table.first.is_visible():
+            return
+
+        verification_visible = (
+            await verification_title.count()
+            and await verification_title.first.is_visible()
+        )
+        if verification_visible:
+            if not verification_logged:
+                utils.logger.info(
+                    "[DouyinCreatorCollector] 检测到身份验证，"
+                    "浏览器将在 2 分钟内保持开启"
+                )
+                verification_logged = True
+        elif (
+            not submission_clicked
+            and await submission_tab.count()
+            and await submission_tab.first.is_visible()
+        ):
+            try:
+                await submission_tab.first.click(timeout=min(1_000, poll_ms))
+            except PlaywrightTimeoutError:
+                # The verification dialog can appear between the visibility
+                # check and click. Keep the browser open and retry.
+                pass
+            else:
+                submission_clicked = True
+
+        await page.wait_for_timeout(poll_ms)
+
+    raise PlaywrightTimeoutError(
+        "Douyin creator table did not appear within 2 minutes"
+    )
