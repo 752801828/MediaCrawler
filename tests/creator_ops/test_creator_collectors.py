@@ -28,6 +28,7 @@ def profile(platform: Platform) -> AccountProfile:
 
 def test_parse_metric_number_handles_chinese_units_and_percentages():
     assert parse_metric_number("1.2万") == 12000
+    assert parse_metric_number("2.99万") == 29900
     assert parse_metric_number("3.5亿") == 350000000
     assert parse_metric_number("12.5%") == 12.5
     assert parse_metric_number("--") == 0

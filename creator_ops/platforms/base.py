@@ -28,11 +28,14 @@ def parse_metric_number(value: Any) -> int | float | str:
     if not text or text in {"-", "--", "N/A", "n/a"}:
         return 0
     multiplier = 1.0
+    has_chinese_unit = False
     if text.endswith("万"):
         multiplier = 10_000.0
+        has_chinese_unit = True
         text = text[:-1]
     elif text.endswith("亿"):
         multiplier = 100_000_000.0
+        has_chinese_unit = True
         text = text[:-1]
     is_percent = text.endswith("%")
     if is_percent:
@@ -41,6 +44,8 @@ def parse_metric_number(value: Any) -> int | float | str:
         number = float(text) * multiplier
     except ValueError:
         return str(value).strip()
+    if has_chinese_unit:
+        return int(number)
     if is_percent or not number.is_integer():
         return number
     return int(number)
