@@ -8,6 +8,9 @@ from datetime import datetime
 from typing import Any
 
 from creator_ops.config import Settings
+from creator_ops.douyin_comment_threads import (
+    build_douyin_root_comment_payloads,
+)
 from creator_ops.domain import MetricRecord, Platform
 from creator_ops.feishu.client import FeishuClient, FeishuError
 
@@ -159,6 +162,8 @@ class OutboxSynchronizer:
             else "comments"
         )
         table_id = self._table_id(target)
+        is_douyin = platform is Platform.DOUYIN
+        remote_comment_id_field = "评论ID" if is_douyin else "comment_id"
         existing_ids: set[str] = set()
         inventory_loaded = False
         try:
@@ -169,7 +174,12 @@ class OutboxSynchronizer:
                 self.settings.feishu.comment_view_id,
             )
             existing_ids = {
-                str((record.get("fields") or {}).get("comment_id") or "")
+                str(
+                    (record.get("fields") or {}).get(
+                        remote_comment_id_field
+                    )
+                    or ""
+                )
                 for record in existing
             }
             inventory_loaded = True
@@ -178,16 +188,28 @@ class OutboxSynchronizer:
 
         queued = 0
         comments = await self.repository.list_comment_payloads(platform.value)
-        for comment in comments:
-            comment_id = str(comment.get("comment_id") or "")
-            if not comment_id or comment_id in existing_ids:
+        if is_douyin:
+            prepared = build_douyin_root_comment_payloads(comments)
+        else:
+            prepared = [
+                (
+                    str(comment.get("comment_id") or ""),
+                    _comment_feishu_payload(comment, platform),
+                )
+                for comment in comments
+            ]
+        for comment_id, payload in prepared:
+            if not comment_id:
                 continue
-            payload = _comment_feishu_payload(comment, platform)
+            if not is_douyin and comment_id in existing_ids:
+                continue
             await self.repository.enqueue_sync(
                 target_table=target,
                 business_key=f"comment:{platform.value}:{comment_id}",
                 payload=payload,
-                force_create=inventory_loaded,
+                force_create=(
+                    inventory_loaded and comment_id not in existing_ids
+                ),
             )
             queued += 1
         return queued

@@ -59,7 +59,7 @@ Do not send removed fields or the Feishu automatic `创建时间` field.
 
 ## Synchronization Behavior
 
-The current Feishu table is empty, so the first run recreates the 364 root comments. The expected current classification is 11 replied and 353 not replied.
+The current Feishu table is empty, so the first run recreates the 364 root comments. The expected current classification is 10 replied and 354 not replied. Eleven NOVSIGHT child replies currently belong to those ten root threads.
 
 On later runs, queue every root payload through the outbox. An unchanged payload remains synced. A newly collected child reply changes the root payload, which marks the existing outbox row pending and updates the existing Feishu root record. Child-comment outbox rows are not queued or delivered by this workflow.
 

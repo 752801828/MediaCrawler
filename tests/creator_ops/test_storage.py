@@ -133,6 +133,37 @@ async def test_force_create_clears_stale_remote_record(repository):
 
 
 @pytest.mark.asyncio
+async def test_changed_root_reply_payload_queues_existing_record_update(
+    repository,
+):
+    repo, session_maker = repository
+    key = "comment:dy:root-comment"
+    outbox_id = await repo.enqueue_sync(
+        target_table="douyin_comments",
+        business_key=key,
+        payload={"评论ID": "root-comment", "是否回复": "否"},
+    )
+    await repo.mark_sync_succeeded(outbox_id, remote_record_id="root-rec")
+
+    same_id = await repo.enqueue_sync(
+        target_table="douyin_comments",
+        business_key=key,
+        payload={
+            "评论ID": "root-comment",
+            "是否回复": "是",
+            "回复内容": "customer: question\nNOVSIGHT: answer",
+        },
+    )
+
+    assert same_id == outbox_id
+    async with session_maker() as session:
+        row = await session.get(CreatorOpsSyncOutbox, outbox_id)
+    assert row.status == "pending"
+    assert row.remote_record_id == "root-rec"
+    assert row.synced_at is None
+
+
+@pytest.mark.asyncio
 async def test_comment_payloads_include_raw_platform_identity(repository):
     repo, session_maker = repository
     async with session_maker() as session:

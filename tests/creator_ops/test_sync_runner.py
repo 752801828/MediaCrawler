@@ -43,6 +43,7 @@ def settings_for(tmp_path: Path) -> Settings:
             douyin_creator_table_id="dy-creator",
             xhs_creator_table_id="xhs-creator",
             history_view_id="history-view",
+            douyin_comment_table_id="dy-comments",
         ),
     )
 
@@ -96,10 +97,12 @@ def test_comment_feishu_payload_preserves_xhs_raw_identity():
 
 
 @pytest.mark.asyncio
-async def test_queue_comments_skips_existing_masked_history(tmp_path: Path):
+async def test_queue_douyin_roots_updates_existing_and_skips_children(
+    tmp_path: Path,
+):
     class Client:
         def iter_records(self, *_args, **_kwargs):
-            return [{"fields": {"comment_id": "existing-comment"}}]
+            return [{"fields": {"评论ID": "existing-root"}}]
 
     class Repo:
         def __init__(self):
@@ -107,11 +110,25 @@ async def test_queue_comments_skips_existing_masked_history(tmp_path: Path):
 
         async def list_comment_payloads(self, _platform):
             return [
-                {"comment_id": "existing-comment", "nickname": "旧昵称"},
                 {
-                    "comment_id": "new-comment",
+                    "id": "1",
+                    "comment_id": "existing-root",
+                    "parent_comment_id": "0",
                     "user_id": "raw-user",
-                    "nickname": "未来原名",
+                    "nickname": "已有一级评论",
+                },
+                {
+                    "id": "2",
+                    "comment_id": "existing-child",
+                    "parent_comment_id": "existing-root",
+                    "nickname": "二级评论",
+                },
+                {
+                    "id": "3",
+                    "comment_id": "new-root",
+                    "parent_comment_id": "0",
+                    "user_id": "new-user",
+                    "nickname": "新一级评论",
                 },
             ]
 
@@ -124,12 +141,22 @@ async def test_queue_comments_skips_existing_masked_history(tmp_path: Path):
 
     queued = await syncer.queue_platform_comments(Platform.DOUYIN)
 
-    assert queued == 1
-    assert len(repo.queued) == 1
-    assert repo.queued[0]["business_key"] == "comment:dy:new-comment"
-    assert repo.queued[0]["force_create"] is True
-    assert repo.queued[0]["payload"]["user_id"] == "raw-user"
-    assert repo.queued[0]["payload"]["nickname"] == "未来原名"
+    assert queued == 2
+    by_key = {row["business_key"]: row for row in repo.queued}
+    assert set(by_key) == {
+        "comment:dy:existing-root",
+        "comment:dy:new-root",
+    }
+    assert by_key["comment:dy:existing-root"]["force_create"] is False
+    assert by_key["comment:dy:new-root"]["force_create"] is True
+    assert (
+        by_key["comment:dy:existing-root"]["payload"]["用户ID"]
+        == "raw-user"
+    )
+    assert (
+        by_key["comment:dy:existing-root"]["payload"]["用户昵称"]
+        == "已有一级评论"
+    )
 
 
 @pytest.mark.asyncio
@@ -145,7 +172,14 @@ async def test_queue_comments_does_not_force_create_when_inventory_fails(
             self.queued = []
 
         async def list_comment_payloads(self, _platform):
-            return [{"comment_id": "comment-1", "nickname": "name"}]
+            return [
+                {
+                    "id": "1",
+                    "comment_id": "comment-1",
+                    "parent_comment_id": "0",
+                    "nickname": "name",
+                }
+            ]
 
         async def enqueue_sync(self, **kwargs):
             self.queued.append(kwargs)
@@ -158,6 +192,36 @@ async def test_queue_comments_does_not_force_create_when_inventory_fails(
 
     assert queued == 1
     assert repo.queued[0]["force_create"] is False
+
+
+@pytest.mark.asyncio
+async def test_queue_xhs_comments_keeps_existing_skip_behavior(tmp_path: Path):
+    class Client:
+        def iter_records(self, *_args, **_kwargs):
+            return [{"fields": {"comment_id": "existing-xhs"}}]
+
+    class Repo:
+        def __init__(self):
+            self.queued = []
+
+        async def list_comment_payloads(self, _platform):
+            return [
+                {"comment_id": "existing-xhs", "nickname": "existing"},
+                {"comment_id": "new-xhs", "nickname": "new"},
+            ]
+
+        async def enqueue_sync(self, **kwargs):
+            self.queued.append(kwargs)
+            return 1
+
+    repo = Repo()
+    syncer = OutboxSynchronizer(settings_for(tmp_path), Client(), repo)
+
+    queued = await syncer.queue_platform_comments(Platform.XHS)
+
+    assert queued == 1
+    assert repo.queued[0]["business_key"] == "comment:xhs:new-xhs"
+    assert repo.queued[0]["payload"]["nickname"] == "new"
 
 
 def test_metric_feishu_payload_includes_content_url():
