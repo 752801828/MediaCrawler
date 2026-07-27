@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -89,6 +90,51 @@ def test_iter_records_follows_page_token(feishu_settings: FeishuSettings):
     records = client.iter_records("app", "table", "view")
 
     assert [item["record_id"] for item in records] == ["1", "2"]
+    assert session.requests[2]["params"]["page_token"] == "next"
+
+
+def test_query_records_sends_filter_fields_and_page_token(
+    feishu_settings: FeishuSettings,
+):
+    session = FakeSession()
+    queue_token(session)
+    session.queue(
+        200,
+        {
+            "code": 0,
+            "data": {
+                "items": [{"record_id": "1", "fields": {}}],
+                "has_more": True,
+                "page_token": "next",
+            },
+        },
+    )
+    session.queue(
+        200,
+        {
+            "code": 0,
+            "data": {
+                "items": [{"record_id": "2", "fields": {}}],
+                "has_more": False,
+            },
+        },
+    )
+    client = FeishuClient(feishu_settings, session=session, sleeper=lambda _: None)
+
+    records = client.query_records(
+        "app",
+        "table",
+        filter_formula='CurrentValue.[作品链接] != ""',
+        field_names=("创建时间", "作品链接"),
+    )
+
+    assert [item["record_id"] for item in records] == ["1", "2"]
+    first_params = session.requests[1]["params"]
+    assert first_params["filter"] == 'CurrentValue.[作品链接] != ""'
+    assert json.loads(first_params["field_names"]) == [
+        "创建时间",
+        "作品链接",
+    ]
     assert session.requests[2]["params"]["page_token"] == "next"
 
 

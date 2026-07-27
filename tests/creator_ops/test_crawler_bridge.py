@@ -177,6 +177,78 @@ def test_xhs_creator_banner_removes_sensitive_query_parameters(monkeypatch):
     assert "二级评论：关闭" in banner
 
 
+def test_stats_comment_task_banner_identifies_refresh_task(monkeypatch):
+    monkeypatch.setattr(config, "ENABLE_GET_SUB_COMMENTS", True)
+    task = Task(
+        task_id="douyin-stats-comments:2026-07-01",
+        platform=Platform.DOUYIN,
+        kind=TaskKind.DOUYIN_STATS_COMMENTS,
+        profile=AccountProfile(
+            platform=Platform.DOUYIN,
+            template="%s_text_data_dir",
+            path=Path("D:/browser_data/dy_text_data_dir"),
+            is_main=False,
+            is_water=True,
+        ),
+        targets=("7000000000000000001",),
+        get_comments=True,
+    )
+
+    banner = _format_task_banner(task)
+
+    assert "任务：作品表评论刷新" in banner
+    assert "一级评论：开启" in banner
+    assert "二级评论：开启" in banner
+
+
+@pytest.mark.asyncio
+async def test_stats_comment_task_uses_detail_mode_and_comments():
+    observed = {}
+
+    class FakeCrawler:
+        async def start(self):
+            observed["crawler_type"] = config.CRAWLER_TYPE
+            observed["targets"] = list(config.DY_SPECIFIED_ID_LIST)
+            observed["comments"] = config.ENABLE_GET_COMMENTS
+            observed["sub_comments"] = (
+                config.is_get_sub_comments_enabled("dy")
+            )
+
+        async def close(self):
+            return None
+
+    async def fake_init_db(_db_type: str):
+        return None
+
+    task = Task(
+        task_id="douyin-stats-comments:2026-07-01",
+        platform=Platform.DOUYIN,
+        kind=TaskKind.DOUYIN_STATS_COMMENTS,
+        profile=AccountProfile(
+            platform=Platform.DOUYIN,
+            template="%s_text_data_dir",
+            path=Path("D:/browser_data/dy_text_data_dir"),
+            is_main=False,
+            is_water=True,
+        ),
+        targets=("7000000000000000001",),
+        get_comments=True,
+    )
+
+    await run_public_task(
+        task,
+        crawler_factory=lambda _platform: FakeCrawler(),
+        init_db=fake_init_db,
+    )
+
+    assert observed == {
+        "crawler_type": "detail",
+        "targets": ["7000000000000000001"],
+        "comments": True,
+        "sub_comments": True,
+    }
+
+
 @pytest.mark.asyncio
 async def test_task_banner_is_emitted_before_database_and_browser(monkeypatch):
     events: list[str] = []

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -70,6 +71,45 @@ class FeishuClient:
             page_token = str(data.get("page_token") or "")
             if not page_token:
                 raise FeishuSchemaError("Feishu pagination omitted page_token")
+
+    def query_records(
+        self,
+        app_token: str,
+        table_id: str,
+        *,
+        filter_formula: str,
+        field_names: Iterable[str] = (),
+        page_size: int = 500,
+    ) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        page_token = ""
+        selected_fields = list(field_names)
+        while True:
+            params: dict[str, Any] = {
+                "page_size": page_size,
+                "filter": filter_formula,
+            }
+            if selected_fields:
+                params["field_names"] = json.dumps(
+                    selected_fields,
+                    ensure_ascii=False,
+                )
+            if page_token:
+                params["page_token"] = page_token
+            payload = self._authorized_request(
+                "GET",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/records",
+                params=params,
+            )
+            data = payload.get("data") or {}
+            records.extend(data.get("items") or [])
+            if not data.get("has_more"):
+                return records
+            page_token = str(data.get("page_token") or "")
+            if not page_token:
+                raise FeishuSchemaError(
+                    "Feishu pagination omitted page_token"
+                )
 
     def batch_create_records(
         self,

@@ -41,6 +41,7 @@ from .help import *
 
 
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
+    REQUEST_MAX_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -124,8 +125,37 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         # Check whether the proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
-        async with make_async_client(proxy=self.proxy) as client:
-            response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        response = None
+        for attempt in range(self.REQUEST_MAX_ATTEMPTS):
+            try:
+                async with make_async_client(proxy=self.proxy) as client:
+                    response = await client.request(
+                        method,
+                        url,
+                        timeout=self.timeout,
+                        **kwargs,
+                    )
+            except httpx.RequestError as exc:
+                if attempt + 1 == self.REQUEST_MAX_ATTEMPTS:
+                    raise DataFetchError(
+                        "Douyin request failed after "
+                        f"{self.REQUEST_MAX_ATTEMPTS} attempts "
+                        f"({type(exc).__name__})"
+                    ) from exc
+                delay = float(2**attempt)
+                utils.logger.warning(
+                    "[DouYinClient.request] Transient request failure "
+                    "%s/%s (%s); retrying in %.0fs",
+                    attempt + 1,
+                    self.REQUEST_MAX_ATTEMPTS,
+                    type(exc).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            break
+        if response is None:
+            raise DataFetchError("Douyin request returned no response")
         try:
             if response.text == "" or response.text == "blocked":
                 utils.logger.error(f"request params incrr, response.text: {response.text}")

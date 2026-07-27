@@ -89,7 +89,10 @@ async def run_public_task(
     init_db: Callable[[str], Any] | None = None,
     tag_repository: Any | None = None,
 ) -> None:
-    if task.kind is TaskKind.CONTENT_DETAIL:
+    if task.kind in {
+        TaskKind.CONTENT_DETAIL,
+        TaskKind.DOUYIN_STATS_COMMENTS,
+    }:
         crawler_type = "detail"
     elif task.kind is TaskKind.CREATOR_CONTENT:
         crawler_type = "creator"
@@ -170,6 +173,8 @@ def _format_task_banner(task: Task) -> str:
     platform_label = _PLATFORM_LABELS[task.platform]
     if task.kind is TaskKind.CONTENT_DETAIL:
         task_label = "作品详情 + 评论" if task.get_comments else "作品详情"
+    elif task.kind is TaskKind.DOUYIN_STATS_COMMENTS:
+        task_label = "作品表评论刷新"
     elif task.kind is TaskKind.CREATOR_CONTENT:
         task_label = "创作者作品"
     elif task.kind is TaskKind.DOUYIN_TAG_CONTENT:

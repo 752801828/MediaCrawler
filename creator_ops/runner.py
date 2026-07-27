@@ -2,10 +2,15 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from creator_ops.config import Settings
 from creator_ops.crawler_bridge import run_public_task
+from creator_ops.douyin_stats_comments import (
+    DEFAULT_DOUYIN_COMMENTS_AFTER,
+    build_douyin_stats_comment_filter,
+)
 from creator_ops.domain import Platform, TaskKind
 from creator_ops.feishu.client import FeishuClient, FeishuError
 from creator_ops.planner import PlanningError, build_plan
@@ -65,6 +70,8 @@ class CreatorOpsRunner:
         dry_run: bool = False,
         collect_only: bool = False,
         sync_only: bool = False,
+        task_kinds: set[TaskKind] | None = None,
+        douyin_comments_after: date = DEFAULT_DOUYIN_COMMENTS_AFTER,
     ) -> WorkflowSummary:
         if sync_only:
             self._configure_upstream_mysql()
@@ -76,8 +83,28 @@ class CreatorOpsRunner:
             )
 
         try:
-            accounts, links, users, tags = self._load_control_records()
-            plan = build_plan(self.settings, accounts, links, users, tags)
+            accounts, links, users, tags, stats_comments = (
+                self._load_control_records(
+                    douyin_comments_after,
+                    include_stats_comments=(
+                        task_kinds is None
+                        or TaskKind.DOUYIN_STATS_COMMENTS in task_kinds
+                    ),
+                )
+            )
+            plan = build_plan(
+                self.settings,
+                accounts,
+                links,
+                users,
+                tags,
+                stats_comments,
+                douyin_comments_after,
+            )
+            if task_kinds is not None:
+                plan = [
+                    task for task in plan if task.kind in task_kinds
+                ]
         except (FeishuError, PlanningError, ValueError):
             return WorkflowSummary(exit_code=2)
 
@@ -144,7 +171,16 @@ class CreatorOpsRunner:
 
     def _load_control_records(
         self,
-    ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+        douyin_comments_after: date,
+        *,
+        include_stats_comments: bool,
+    ) -> tuple[
+        list[dict],
+        list[dict],
+        list[dict],
+        list[dict],
+        list[dict],
+    ]:
         feishu = self.settings.feishu
         accounts = self.client.iter_records(
             feishu.app_token,
@@ -166,7 +202,17 @@ class CreatorOpsRunner:
             feishu.douyin_tag_table_id,
             "",
         )
-        return accounts, links, users, tags
+        stats_comments: list[dict] = []
+        if include_stats_comments:
+            stats_comments = self.client.query_records(
+                feishu.app_token,
+                feishu.douyin_stats_table_id,
+                filter_formula=build_douyin_stats_comment_filter(
+                    douyin_comments_after
+                ),
+                field_names=("创建时间", "作品链接"),
+            )
+        return accounts, links, users, tags, stats_comments
 
     async def _run_dry(self, plan: list[Any]) -> WorkflowSummary:
         succeeded = 0

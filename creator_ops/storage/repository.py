@@ -191,7 +191,10 @@ class CreatorOpsRepository:
                 payload=payload,
             )
 
-    async def pending_sync(self, limit: int = 500) -> list[CreatorOpsSyncOutbox]:
+    async def pending_sync(
+        self,
+        limit: int | None = None,
+    ) -> list[CreatorOpsSyncOutbox]:
         async with self.session_factory() as session:
             rows = await session.scalars(
                 select(CreatorOpsSyncOutbox)
@@ -231,7 +234,7 @@ class CreatorOpsRepository:
         self,
         platform: str,
         *,
-        limit: int = 5000,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
         if platform == "xhs":
             from database.models import XhsNoteComment as CommentModel
@@ -245,9 +248,10 @@ class CreatorOpsRepository:
             raise ValueError(f"unsupported comment platform: {platform}")
 
         async with self.session_factory() as session:
-            result = await session.scalars(
-                select(CommentModel).order_by(CommentModel.id).limit(limit)
-            )
+            statement = select(CommentModel).order_by(CommentModel.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.scalars(statement)
             payloads: list[dict[str, Any]] = []
             for row in result:
                 payload = {

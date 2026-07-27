@@ -81,7 +81,7 @@ class OutboxSynchronizer:
         self.client = client
         self.repository = repository
 
-    async def deliver_pending(self, limit: int = 500) -> SyncSummary:
+    async def deliver_pending(self, limit: int | None = None) -> SyncSummary:
         rows = await self.repository.pending_sync(limit=limit)
         grouped: dict[str, list[Any]] = defaultdict(list)
         for row in rows:

@@ -215,3 +215,57 @@ def test_tag_task_never_falls_back_to_main_account(tmp_path: Path):
 
     with pytest.raises(PlanningError, match="water account"):
         build_plan(settings_for(tmp_path), accounts, [], [], tags)
+
+
+def test_stats_comment_task_deduplicates_and_uses_douyin_water_account(
+    tmp_path: Path,
+):
+    accounts = [
+        {
+            "fields": {
+                "ID": "%s_use_data_dir",
+                "平台": "抖音",
+                "主账号": True,
+            }
+        },
+        {
+            "fields": {
+                "ID": "%s_text_data_dir",
+                "平台": "抖音",
+                "水号": True,
+            }
+        },
+    ]
+    stats_records = [
+        {
+            "fields": {
+                "创建时间": "2026-07-02 10:00:00",
+                "作品链接": "https://www.douyin.com/video/7000000000000000001",
+            }
+        },
+        {
+            "fields": {
+                "创建时间": "2026-07-03 10:00:00",
+                "作品链接": "https://www.douyin.com/video/7000000000000000001",
+            }
+        },
+    ]
+
+    plan = build_plan(
+        settings_for(tmp_path),
+        accounts,
+        [],
+        [],
+        [],
+        stats_records,
+    )
+    task = next(
+        task
+        for task in plan
+        if task.kind is TaskKind.DOUYIN_STATS_COMMENTS
+    )
+
+    assert task.targets == ("7000000000000000001",)
+    assert task.profile.path.name == "dy_text_data_dir"
+    assert task.profile.is_water is True
+    assert task.get_comments is True

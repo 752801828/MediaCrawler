@@ -17,6 +17,7 @@ class TaskKind(str, Enum):
     CONTENT_DETAIL = "content_detail"
     CREATOR_CONTENT = "creator_content"
     DOUYIN_TAG_CONTENT = "douyin_tag_content"
+    DOUYIN_STATS_COMMENTS = "douyin_stats_comments"
 
 
 @dataclass(frozen=True)

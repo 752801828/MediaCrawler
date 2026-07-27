@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import pytest
 
 from creator_ops.config import FeishuSettings, MysqlSettings, Settings
-from creator_ops.domain import MetricRecord, Platform
-from creator_ops.runner import CreatorOpsRunner
+from creator_ops.domain import MetricRecord, Platform, TaskKind
+from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
 from creator_ops.sync import (
     OutboxSynchronizer,
     SyncSummary,
@@ -129,8 +129,10 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
     class Repo:
         def __init__(self):
             self.synced = []
+            self.requested_limit = 500
 
-        async def pending_sync(self, limit=500):
+        async def pending_sync(self, limit=None):
+            self.requested_limit = limit
             return rows
 
         async def mark_sync_succeeded(self, row_id, remote_record_id=""):
@@ -163,6 +165,7 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
     summary = await syncer.deliver_pending()
 
     assert summary == SyncSummary(attempted=2, succeeded=2, failed=0)
+    assert repo.requested_limit is None
     assert repo.synced == [(1, "rec-1"), (2, "rec-2")]
     assert client.calls[0][1] == "xhs-stats"
 
@@ -229,6 +232,10 @@ async def test_runner_continues_after_one_creator_task_fails(tmp_path: Path):
         def iter_records(self, _app, table, _view):
             events.append(f"read:{table}")
             return accounts if table == "account" else []
+
+        def query_records(self, *_args, **_kwargs):
+            events.append("read:stats-comments")
+            return []
 
     class Repo:
         async def create_run(self, _uuid):
@@ -327,6 +334,9 @@ async def test_tag_task_does_not_queue_comment_or_feishu_sync(tmp_path: Path):
                 return tags
             return []
 
+        def query_records(self, *_args, **_kwargs):
+            return []
+
     class Repo:
         async def create_run(self, _uuid):
             return 1
@@ -374,3 +384,105 @@ async def test_tag_task_does_not_queue_comment_or_feishu_sync(tmp_path: Path):
         "finish:True",
         "run:succeeded",
     ]
+
+
+@pytest.mark.asyncio
+async def test_stats_comment_task_runs_and_queues_douyin_comments(
+    tmp_path: Path,
+):
+    settings = settings_for(tmp_path)
+    events = []
+    accounts = [
+        {
+            "fields": {
+                "ID": "%s_text_data_dir",
+                "平台": "抖音",
+                "水号": True,
+            }
+        }
+    ]
+    stats_records = [
+        {
+            "fields": {
+                "创建时间": "2026-07-02 10:00:00",
+                "作品链接": "https://www.douyin.com/video/7000000000000000001",
+            }
+        }
+    ]
+
+    class Client:
+        def iter_records(self, _app, table, _view):
+            return accounts if table == "account" else []
+
+        def query_records(
+            self,
+            _app,
+            table,
+            *,
+            filter_formula,
+            field_names,
+        ):
+            events.append(
+                (
+                    "query",
+                    table,
+                    filter_formula,
+                    tuple(field_names),
+                )
+            )
+            return stats_records
+
+    class Repo:
+        async def create_run(self, _uuid):
+            return 1
+
+        async def start_task(self, _run_id, task):
+            events.append(("task", task.kind, task.targets))
+            return 1
+
+        async def finish_task(self, _task_id, *, success, error=""):
+            events.append(("finish", success))
+
+        async def finish_run(self, *args, **kwargs):
+            events.append(("run", kwargs["status"]))
+
+    class Syncer:
+        async def queue_platform_comments(self, platform):
+            events.append(("queue", platform))
+            return 1
+
+        async def deliver_pending(self):
+            events.append(("sync",))
+            return SyncSummary(attempted=1, succeeded=1, failed=0)
+
+    async def public_task_runner(task):
+        events.append(("public", task.kind, task.get_comments))
+
+    async def init_db(_db_type):
+        events.append(("db",))
+
+    runner = CreatorOpsRunner(
+        settings,
+        client=Client(),
+        repository=Repo(),
+        synchronizer=Syncer(),
+        public_task_runner=public_task_runner,
+        init_db=init_db,
+    )
+
+    summary = await runner.run()
+
+    assert summary == WorkflowSummary(
+        exit_code=0,
+        total_tasks=1,
+        succeeded_tasks=1,
+        failed_tasks=0,
+        sync=SyncSummary(attempted=1, succeeded=1, failed=0),
+    )
+    assert (
+        "task",
+        TaskKind.DOUYIN_STATS_COMMENTS,
+        ("7000000000000000001",),
+    ) in events
+    assert ("public", TaskKind.DOUYIN_STATS_COMMENTS, True) in events
+    assert ("queue", Platform.DOUYIN) in events

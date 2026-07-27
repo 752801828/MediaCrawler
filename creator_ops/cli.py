@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date
+from typing import Any
 
 import typer
 
 from creator_ops.config import Settings, SettingsError, load_settings
+from creator_ops.domain import TaskKind
+from creator_ops.douyin_stats_comments import (
+    DEFAULT_DOUYIN_COMMENTS_AFTER,
+)
 from creator_ops.migrate import migrate_legacy_creator_history
 from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
 
@@ -35,6 +41,34 @@ def collect_only(
 @app.command("sync-only")
 def sync_only() -> None:
     _run(sync_only=True)
+
+
+@app.command("douyin-stats-comments")
+def douyin_stats_comments(
+    after_date: str = typer.Option(
+        DEFAULT_DOUYIN_COMMENTS_AFTER.isoformat(),
+        "--after",
+        help="Only works published strictly after this date (YYYY-MM-DD).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Read, filter, and plan targets without opening the crawler.",
+    ),
+) -> None:
+    try:
+        parsed_after = date.fromisoformat(after_date)
+    except ValueError as exc:
+        typer.echo(
+            "Invalid --after date; expected YYYY-MM-DD.",
+            err=True,
+        )
+        raise typer.Exit(2) from exc
+    _run(
+        dry_run=dry_run,
+        task_kinds={TaskKind.DOUYIN_STATS_COMMENTS},
+        douyin_comments_after=parsed_after,
+    )
 
 
 @app.command("validate-config")
@@ -77,7 +111,7 @@ def migrate_legacy(
     )
 
 
-def _run(**kwargs: bool) -> None:
+def _run(**kwargs: Any) -> None:
     settings = _load_or_exit()
     summary = asyncio.run(CreatorOpsRunner(settings).run(**kwargs))
     _print_summary(summary)

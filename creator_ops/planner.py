@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 from collections.abc import Iterable, Mapping
+from datetime import date
 from typing import Any
 
 from creator_ops.config import Settings
+from creator_ops.douyin_stats_comments import (
+    DEFAULT_DOUYIN_COMMENTS_AFTER,
+    parse_douyin_stats_comment_targets,
+)
 from creator_ops.douyin_tags import parse_douyin_tag_target
 from creator_ops.domain import AccountProfile, Platform, Task, TaskKind
 from creator_ops.feishu.schema import PLATFORM_LABELS
@@ -21,6 +26,8 @@ def build_plan(
     link_records: Iterable[Mapping[str, Any]],
     user_records: Iterable[Mapping[str, Any]],
     tag_records: Iterable[Mapping[str, Any]] = (),
+    stats_comment_records: Iterable[Mapping[str, Any]] = (),
+    stats_comment_after: date = DEFAULT_DOUYIN_COMMENTS_AFTER,
 ) -> list[Task]:
     profiles = _parse_profiles(settings, account_records)
     main_profiles: dict[Platform, list[AccountProfile]] = defaultdict(list)
@@ -129,6 +136,31 @@ def build_plan(
                 profile=profile,
                 persist_profile=False,
                 tag_targets=(target,),
+            )
+        )
+
+    stats_comment_targets = parse_douyin_stats_comment_targets(
+        stats_comment_records,
+        after=stats_comment_after,
+    )
+    if stats_comment_targets:
+        profile = _next_water_profile(
+            water_profiles,
+            profile_positions,
+            Platform.DOUYIN,
+        )
+        plan.append(
+            Task(
+                task_id=(
+                    "douyin-stats-comments:"
+                    f"{stats_comment_after.isoformat()}"
+                ),
+                platform=Platform.DOUYIN,
+                kind=TaskKind.DOUYIN_STATS_COMMENTS,
+                profile=profile,
+                targets=stats_comment_targets,
+                get_comments=True,
+                persist_profile=False,
             )
         )
 
