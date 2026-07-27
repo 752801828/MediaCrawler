@@ -257,7 +257,10 @@ class CreatorOpsRepository:
                 payload = {
                     "id": str(row.id),
                     "creator_hash": getattr(row, "creator_hash", "") or "",
+                    "user_id": getattr(row, "user_id", "") or "",
                     "nickname": getattr(row, "nickname", "") or "",
+                    "avatar": getattr(row, "avatar", "") or "",
+                    "ip_location": getattr(row, "ip_location", "") or "",
                     "add_ts": getattr(row, "add_ts", 0) or 0,
                     "last_modify_ts": getattr(row, "last_modify_ts", 0) or 0,
                     "comment_id": getattr(row, "comment_id", "") or "",
@@ -269,6 +272,21 @@ class CreatorOpsRepository:
                     "pictures": getattr(row, "pictures", "") or "",
                     content_id_field: getattr(row, content_id_field, "") or "",
                 }
+                if platform == "dy":
+                    payload.update(
+                        {
+                            "sec_uid": getattr(row, "sec_uid", "") or "",
+                            "short_user_id": (
+                                getattr(row, "short_user_id", "") or ""
+                            ),
+                            "user_unique_id": (
+                                getattr(row, "user_unique_id", "") or ""
+                            ),
+                            "user_signature": (
+                                getattr(row, "user_signature", "") or ""
+                            ),
+                        }
+                    )
                 payloads.append(payload)
             return payloads
 

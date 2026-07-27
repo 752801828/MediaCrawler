@@ -16,7 +16,7 @@ from creator_ops.storage.models import (
     CreatorOpsSyncOutbox,
 )
 from creator_ops.storage.repository import CreatorOpsRepository
-from database.models import Base
+from database.models import Base, DouyinAwemeComment, XhsNoteComment
 
 
 def test_content_snapshot_has_daily_business_key():
@@ -107,6 +107,53 @@ async def test_outbox_transitions_from_pending_to_synced(repository):
     assert row.status == "synced"
     assert row.remote_record_id == "rec-1"
     assert row.synced_at is not None
+
+
+@pytest.mark.asyncio
+async def test_comment_payloads_include_raw_platform_identity(repository):
+    repo, session_maker = repository
+    async with session_maker() as session:
+        session.add_all(
+            [
+                DouyinAwemeComment(
+                    comment_id="dy-comment",
+                    aweme_id="dy-aweme",
+                    user_id="dy-user",
+                    sec_uid="dy-sec",
+                    short_user_id="12345",
+                    user_unique_id="dy-unique",
+                    nickname="抖音原名",
+                    avatar="https://dy/avatar",
+                    user_signature="抖音签名",
+                    ip_location="上海",
+                ),
+                XhsNoteComment(
+                    comment_id="xhs-comment",
+                    note_id="xhs-note",
+                    user_id="xhs-user",
+                    nickname="小红书原名",
+                    avatar="https://xhs/avatar",
+                    ip_location="广东",
+                ),
+            ]
+        )
+        await session.commit()
+
+    douyin = (await repo.list_comment_payloads("dy"))[0]
+    xhs = (await repo.list_comment_payloads("xhs"))[0]
+
+    assert douyin["user_id"] == "dy-user"
+    assert douyin["sec_uid"] == "dy-sec"
+    assert douyin["short_user_id"] == "12345"
+    assert douyin["user_unique_id"] == "dy-unique"
+    assert douyin["nickname"] == "抖音原名"
+    assert douyin["avatar"] == "https://dy/avatar"
+    assert douyin["user_signature"] == "抖音签名"
+    assert douyin["ip_location"] == "上海"
+    assert xhs["user_id"] == "xhs-user"
+    assert xhs["nickname"] == "小红书原名"
+    assert xhs["avatar"] == "https://xhs/avatar"
+    assert xhs["ip_location"] == "广东"
 
 
 @pytest.mark.asyncio

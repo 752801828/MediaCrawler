@@ -10,8 +10,6 @@ from typing import Any
 from creator_ops.config import Settings
 from creator_ops.domain import MetricRecord, Platform
 from creator_ops.feishu.client import FeishuClient, FeishuError
-from creator_ops.feishu.schema import PRIVACY_RESTRICTED_COMMENT_FIELDS
-from tools.user_hash import mask_nickname
 
 DOUYIN_FEISHU_METRIC_FIELDS = {
     "完播率": "完播率_",
@@ -27,14 +25,6 @@ class SyncSummary:
     attempted: int = 0
     succeeded: int = 0
     failed: int = 0
-
-
-def sanitize_comment_fields(fields: dict[str, Any]) -> dict[str, Any]:
-    output = dict(fields)
-    for key in PRIVACY_RESTRICTED_COMMENT_FIELDS:
-        if key in output:
-            output[key] = ""
-    return output
 
 
 def metric_feishu_payload(record: MetricRecord) -> dict[str, Any]:
@@ -216,28 +206,13 @@ class OutboxSynchronizer:
 
 def _comment_feishu_payload(
     fields: dict[str, Any],
-    platform: Platform,
+    _platform: Platform,
 ) -> dict[str, Any]:
-    cleaned = sanitize_comment_fields(fields)
-    creator_hash = str(cleaned.pop("creator_hash", "") or "")
-    cleaned["user_id"] = f"anon:{creator_hash}" if creator_hash else ""
-    cleaned["nickname"] = mask_nickname(cleaned.get("nickname"))
+    cleaned = dict(fields)
+    cleaned.pop("creator_hash", None)
     cleaned["add_ts"] = _format_timestamp(cleaned.get("add_ts"))
     cleaned["last_modify_ts"] = _format_timestamp(cleaned.get("last_modify_ts"))
     cleaned["create_time"] = _format_timestamp(cleaned.get("create_time"))
-    if platform is Platform.DOUYIN:
-        cleaned.update(
-            {
-                "sec_uid": "",
-                "short_user_id": "",
-                "user_unique_id": "",
-                "avatar": "",
-                "user_signature": "",
-                "ip_location": "",
-            }
-        )
-    else:
-        cleaned.update({"avatar": "", "ip_location": ""})
     return cleaned
 
 

@@ -16,7 +16,6 @@ from creator_ops.sync import (
     SyncSummary,
     _comment_feishu_payload,
     metric_feishu_payload,
-    sanitize_comment_fields,
 )
 
 
@@ -47,45 +46,88 @@ def settings_for(tmp_path: Path) -> Settings:
     )
 
 
-def test_sanitize_comment_fields_removes_public_identity():
-    output = sanitize_comment_fields(
-        {
-            "comment_id": "c1",
-            "content": "hello",
-            "creator_hash": "hash",
-            "nickname": "张*三",
-            "user_id": "raw-user",
-            "avatar": "https://private",
-            "ip_location": "北京",
-            "user_signature": "secret",
-        }
-    )
-
-    assert output["creator_hash"] == "hash"
-    assert output["nickname"] == "张*三"
-    assert output["user_id"] == ""
-    assert output["avatar"] == ""
-    assert output["ip_location"] == ""
-    assert output["user_signature"] == ""
-
-
-def test_comment_feishu_payload_masks_local_raw_nickname():
+def test_comment_feishu_payload_preserves_douyin_raw_identity():
     output = _comment_feishu_payload(
         {
             "comment_id": "c1",
             "creator_hash": "hash",
-            "nickname": "完整昵称",
             "user_id": "raw-user",
+            "sec_uid": "raw-sec-uid",
+            "short_user_id": "12345",
+            "user_unique_id": "unique-user",
+            "nickname": "完整昵称",
             "avatar": "https://private",
             "ip_location": "北京",
+            "user_signature": "secret",
         },
         Platform.DOUYIN,
     )
 
-    assert output["nickname"] == "完***称"
-    assert output["user_id"] == "anon:hash"
-    assert output["avatar"] == ""
-    assert output["ip_location"] == ""
+    assert "creator_hash" not in output
+    assert output["user_id"] == "raw-user"
+    assert output["sec_uid"] == "raw-sec-uid"
+    assert output["short_user_id"] == "12345"
+    assert output["user_unique_id"] == "unique-user"
+    assert output["nickname"] == "完整昵称"
+    assert output["avatar"] == "https://private"
+    assert output["ip_location"] == "北京"
+    assert output["user_signature"] == "secret"
+
+
+def test_comment_feishu_payload_preserves_xhs_raw_identity():
+    output = _comment_feishu_payload(
+        {
+            "comment_id": "c1",
+            "creator_hash": "hash",
+            "nickname": "小红书原名",
+            "user_id": "xhs-user",
+            "avatar": "https://xhs/avatar",
+            "ip_location": "广东",
+        },
+        Platform.XHS,
+    )
+
+    assert "creator_hash" not in output
+    assert output["nickname"] == "小红书原名"
+    assert output["user_id"] == "xhs-user"
+    assert output["avatar"] == "https://xhs/avatar"
+    assert output["ip_location"] == "广东"
+
+
+@pytest.mark.asyncio
+async def test_queue_comments_skips_existing_masked_history(tmp_path: Path):
+    class Client:
+        def iter_records(self, *_args, **_kwargs):
+            return [{"fields": {"comment_id": "existing-comment"}}]
+
+    class Repo:
+        def __init__(self):
+            self.queued = []
+
+        async def list_comment_payloads(self, _platform):
+            return [
+                {"comment_id": "existing-comment", "nickname": "旧昵称"},
+                {
+                    "comment_id": "new-comment",
+                    "user_id": "raw-user",
+                    "nickname": "未来原名",
+                },
+            ]
+
+        async def enqueue_sync(self, **kwargs):
+            self.queued.append(kwargs)
+            return 1
+
+    repo = Repo()
+    syncer = OutboxSynchronizer(settings_for(tmp_path), Client(), repo)
+
+    queued = await syncer.queue_platform_comments(Platform.DOUYIN)
+
+    assert queued == 1
+    assert len(repo.queued) == 1
+    assert repo.queued[0]["business_key"] == "comment:dy:new-comment"
+    assert repo.queued[0]["payload"]["user_id"] == "raw-user"
+    assert repo.queued[0]["payload"]["nickname"] == "未来原名"
 
 
 def test_metric_feishu_payload_includes_content_url():

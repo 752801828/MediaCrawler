@@ -26,18 +26,6 @@ PLATFORM_LABELS = {
     "抖音": "dy",
 }
 
-PRIVACY_RESTRICTED_COMMENT_FIELDS = frozenset(
-    {
-        "user_id",
-        "sec_uid",
-        "short_user_id",
-        "user_unique_id",
-        "avatar",
-        "ip_location",
-        "user_signature",
-    }
-)
-
 XHS_STATS_FIELDS = (
     "标题",
     "创建时间",
