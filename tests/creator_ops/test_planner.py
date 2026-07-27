@@ -188,6 +188,8 @@ def test_tag_records_are_deduplicated_and_use_douyin_water_account(tmp_path: Pat
     assert tag_tasks[0].profile.is_water is True
     assert tag_tasks[0].profile.is_main is False
     assert tag_tasks[0].tag_targets[0].tag_id == "7322391300177987638"
+    assert tag_tasks[0].get_comments is True
+    assert tag_tasks[0].published_after is not None
 
 
 def test_tag_task_never_falls_back_to_main_account(tmp_path: Path):

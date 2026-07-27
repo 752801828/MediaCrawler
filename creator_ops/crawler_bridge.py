@@ -13,6 +13,7 @@ from playwright.async_api import Error as PlaywrightError
 from creator_ops.douyin_tags import extract_douyin_tag_aweme
 from creator_ops.domain import Platform, Task, TaskKind
 from tools import utils
+from var import douyin_comment_store_var
 
 
 _SCOPED_CONFIG_NAMES = (
@@ -154,6 +155,25 @@ async def run_public_task(
             crawler.tag_page_callback = save_tag_page
         try:
             await crawler.start()
+            if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+                if task.published_after is None:
+                    raise ValueError(
+                        "douyin tag comment task is missing published cutoff"
+                    )
+                aweme_ids = await tag_repository.list_recent_aweme_ids(
+                    tuple(target.tag_id for target in task.tag_targets),
+                    published_after=task.published_after,
+                )
+                utils.logger.info(
+                    "[creator_ops.run_public_task] Tag近两个月视频=%s，"
+                    "开始抓取父评论和子评论",
+                    len(aweme_ids),
+                )
+                token = douyin_comment_store_var.set("tag")
+                try:
+                    await crawler.batch_get_note_comments(list(aweme_ids))
+                finally:
+                    douyin_comment_store_var.reset(token)
         finally:
             await _close_crawler(crawler)
 
@@ -227,7 +247,10 @@ def _format_task_banner(task: Task) -> str:
         ]
     )
     if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
-        lines.insert(-1, "数据表：douyin_tag_aweme")
+        lines.insert(
+            -1,
+            "数据表：douyin_tag_aweme + douyin_tag_aweme_comment",
+        )
     return "\n".join(lines)
 
 

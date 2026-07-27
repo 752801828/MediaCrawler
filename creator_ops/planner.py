@@ -134,8 +134,10 @@ def build_plan(
                 platform=Platform.DOUYIN,
                 kind=TaskKind.DOUYIN_TAG_CONTENT,
                 profile=profile,
+                get_comments=True,
                 persist_profile=False,
                 tag_targets=(target,),
+                published_after=stats_comment_after,
             )
         )
 

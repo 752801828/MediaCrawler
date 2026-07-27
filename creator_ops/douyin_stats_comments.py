@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from calendar import monthrange
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime, time
 from typing import Any
@@ -8,11 +9,28 @@ from typing import Any
 from tools import utils
 
 
-DEFAULT_DOUYIN_COMMENTS_AFTER = date(2026, 7, 1)
 DOUYIN_VIDEO_ID_PATTERN = re.compile(
     r"(?:https?://)?(?:www\.)?douyin\.com/video/(\d+)",
     re.IGNORECASE,
 )
+
+
+def rolling_month_cutoff(
+    today: date | None = None,
+    *,
+    months: int = 2,
+) -> date:
+    if months < 0:
+        raise ValueError("months must be non-negative")
+    current = today or date.today()
+    month_index = current.year * 12 + current.month - 1 - months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(current.day, monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+DEFAULT_DOUYIN_COMMENTS_AFTER = rolling_month_cutoff()
 
 
 def build_douyin_stats_comment_filter(after: date) -> str:
@@ -21,7 +39,7 @@ def build_douyin_stats_comment_filter(after: date) -> str:
     )
     return (
         "AND("
-        f'CurrentValue.[创建时间] > "{boundary}", '
+        f'CurrentValue.[创建时间] >= "{boundary}", '
         'CurrentValue.[作品链接] != ""'
         ")"
     )
@@ -38,7 +56,7 @@ def parse_douyin_stats_comment_targets(
     for record in records:
         fields = record.get("fields") or {}
         published_at = _parse_datetime(fields.get("创建时间"))
-        if published_at is None or published_at <= boundary:
+        if published_at is None or published_at < boundary:
             continue
         content_url = _field_text(fields.get("作品链接"))
         match = DOUYIN_VIDEO_ID_PATTERN.search(content_url)

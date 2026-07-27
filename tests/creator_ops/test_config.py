@@ -38,6 +38,10 @@ def test_load_settings_defaults_to_mysql_and_expands_profile(tmp_path: Path):
 
     assert settings.database_type == "mysql"
     assert settings.feishu.douyin_tag_table_id == "tblEBAE044RsVURX"
+    assert (
+        settings.feishu.douyin_tag_comment_table_id
+        == "tbl2YGN6CJszL4Ri"
+    )
     assert settings.profile_path("%s_use_data_dir", "xhs") == (
         tmp_path / "xhs_use_data_dir"
     ).resolve()
@@ -50,6 +54,20 @@ def test_load_settings_allows_douyin_tag_table_override(tmp_path: Path):
     settings = load_settings(env)
 
     assert settings.feishu.douyin_tag_table_id == "tbl_custom_tag"
+
+
+def test_load_settings_allows_douyin_tag_comment_table_override(
+    tmp_path: Path,
+):
+    env = valid_env(tmp_path)
+    env["FEISHU_DOUYIN_TAG_COMMENT_TABLE_ID"] = "tbl_custom_comments"
+
+    settings = load_settings(env)
+
+    assert (
+        settings.feishu.douyin_tag_comment_table_id
+        == "tbl_custom_comments"
+    )
 
 
 def test_load_settings_reports_missing_name_without_secret_value(tmp_path: Path):

@@ -292,6 +292,55 @@ class CreatorOpsRepository:
                 payloads.append(payload)
             return payloads
 
+    async def list_douyin_tag_comment_payloads(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from database.models import DouyinTagAwemeComment
+
+        return await self._list_douyin_comment_payloads(
+            DouyinTagAwemeComment,
+            limit=limit,
+        )
+
+    async def _list_douyin_comment_payloads(
+        self,
+        comment_model: Any,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        async with self.session_factory() as session:
+            statement = select(comment_model).order_by(comment_model.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.scalars(statement)
+            return [
+                {
+                    "id": str(row.id),
+                    "creator_hash": row.creator_hash or "",
+                    "user_id": row.user_id or "",
+                    "sec_uid": row.sec_uid or "",
+                    "short_user_id": row.short_user_id or "",
+                    "user_unique_id": row.user_unique_id or "",
+                    "nickname": row.nickname or "",
+                    "avatar": row.avatar or "",
+                    "user_signature": row.user_signature or "",
+                    "ip_location": row.ip_location or "",
+                    "add_ts": row.add_ts or 0,
+                    "last_modify_ts": row.last_modify_ts or 0,
+                    "comment_id": row.comment_id or "",
+                    "aweme_id": row.aweme_id or "",
+                    "content": row.content or "",
+                    "create_time": row.create_time or 0,
+                    "sub_comment_count": row.sub_comment_count or 0,
+                    "parent_comment_id": row.parent_comment_id or "",
+                    "like_count": row.like_count or 0,
+                    "pictures": row.pictures or "",
+                }
+                for row in result
+            ]
+
 
 def _canonical_json(value: dict[str, Any]) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

@@ -8,8 +8,8 @@ from typing import Any
 from creator_ops.config import Settings
 from creator_ops.crawler_bridge import run_public_task
 from creator_ops.douyin_stats_comments import (
-    DEFAULT_DOUYIN_COMMENTS_AFTER,
     build_douyin_stats_comment_filter,
+    rolling_month_cutoff,
 )
 from creator_ops.domain import Platform, TaskKind
 from creator_ops.feishu.client import FeishuClient, FeishuError
@@ -71,7 +71,7 @@ class CreatorOpsRunner:
         collect_only: bool = False,
         sync_only: bool = False,
         task_kinds: set[TaskKind] | None = None,
-        douyin_comments_after: date = DEFAULT_DOUYIN_COMMENTS_AFTER,
+        douyin_comments_after: date | None = None,
     ) -> WorkflowSummary:
         if sync_only:
             self._configure_upstream_mysql()
@@ -81,6 +81,9 @@ class CreatorOpsRunner:
                 exit_code=1 if sync_summary.failed else 0,
                 sync=sync_summary,
             )
+
+        if douyin_comments_after is None:
+            douyin_comments_after = rolling_month_cutoff()
 
         try:
             accounts, links, users, tags, stats_comments = (
@@ -135,7 +138,9 @@ class CreatorOpsRunner:
                         )
                 else:
                     await self.public_task_runner(task)
-                    if task.kind is not TaskKind.DOUYIN_TAG_CONTENT:
+                    if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+                        await self.synchronizer.queue_douyin_tag_comments()
+                    else:
                         await self.synchronizer.queue_platform_comments(task.platform)
             except Exception as exc:
                 failed += 1

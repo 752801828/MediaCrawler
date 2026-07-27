@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,7 @@ from sqlalchemy import UniqueConstraint, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from creator_ops.storage import DouyinTagAweme, DouyinTagRepository
-from database.models import Base
+from database.models import Base, DouyinTagAwemeComment
 
 
 def test_douyin_tag_aweme_has_three_field_unique_key():
@@ -21,6 +22,20 @@ def test_douyin_tag_aweme_has_three_field_unique_key():
     columns = {tuple(column.name for column in item.columns) for item in constraints}
 
     assert ("tag_id", "aweme_id", "author_id") in columns
+
+
+def test_douyin_tag_comment_has_video_comment_unique_key():
+    constraints = [
+        item
+        for item in DouyinTagAwemeComment.__table__.constraints
+        if isinstance(item, UniqueConstraint)
+    ]
+    columns = {
+        tuple(column.name for column in item.columns)
+        for item in constraints
+    }
+
+    assert ("aweme_id", "comment_id") in columns
 
 
 @pytest_asyncio.fixture
@@ -122,3 +137,43 @@ async def test_tag_repository_keeps_different_authors_separate(tag_repository):
     async with session_maker() as session:
         count = await session.scalar(select(func.count()).select_from(DouyinTagAweme))
     assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_tag_repository_lists_only_recent_unique_awemes(
+    tag_repository,
+):
+    repository, _session_maker = tag_repository
+    await repository.upsert_many(
+        [
+            tag_row(
+                tag_id="tag-1",
+                aweme_id="recent",
+                published_at=datetime(2026, 5, 27, 0, 0),
+            ),
+            tag_row(
+                tag_id="tag-2",
+                aweme_id="recent",
+                published_at=datetime(2026, 6, 1, 0, 0),
+            ),
+            tag_row(
+                tag_id="tag-1",
+                aweme_id="old",
+                author_id="author-old",
+                published_at=datetime(2026, 5, 26, 23, 59),
+            ),
+            tag_row(
+                tag_id="unselected",
+                aweme_id="other",
+                author_id="author-other",
+                published_at=datetime(2026, 7, 1, 0, 0),
+            ),
+        ]
+    )
+
+    aweme_ids = await repository.list_recent_aweme_ids(
+        ("tag-1", "tag-2"),
+        published_after=date(2026, 5, 27),
+    )
+
+    assert aweme_ids == ("recent",)

@@ -9,7 +9,7 @@ from typing import Any
 
 from creator_ops.config import Settings
 from creator_ops.douyin_comment_threads import (
-    build_douyin_root_comment_payloads,
+    build_douyin_comment_payloads,
 )
 from creator_ops.domain import MetricRecord, Platform
 from creator_ops.feishu.client import FeishuClient, FeishuError
@@ -155,15 +155,20 @@ class OutboxSynchronizer:
         )
 
     async def queue_platform_comments(self, platform: Platform) -> int:
-        target = (
-            "douyin_comments"
-            if platform is Platform.DOUYIN
-            and self.settings.feishu.douyin_comment_table_id
-            else "comments"
-        )
-        table_id = self._table_id(target)
         is_douyin = platform is Platform.DOUYIN
-        remote_comment_id_field = "评论ID" if is_douyin else "comment_id"
+        if is_douyin:
+            comments = await self.repository.list_comment_payloads(
+                platform.value
+            )
+            return await self._queue_douyin_comments(
+                comments,
+                target="douyin_comments",
+                business_key_prefix="comment:dy:",
+                view_id=self.settings.feishu.comment_view_id,
+            )
+
+        target = "comments"
+        table_id = self._table_id(target)
         existing_ids: set[str] = set()
         inventory_loaded = False
         try:
@@ -175,9 +180,7 @@ class OutboxSynchronizer:
             )
             existing_ids = {
                 str(
-                    (record.get("fields") or {}).get(
-                        remote_comment_id_field
-                    )
+                    (record.get("fields") or {}).get("comment_id")
                     or ""
                 )
                 for record in existing
@@ -188,27 +191,83 @@ class OutboxSynchronizer:
 
         queued = 0
         comments = await self.repository.list_comment_payloads(platform.value)
-        if is_douyin:
-            prepared = build_douyin_root_comment_payloads(comments)
-        else:
-            prepared = [
-                (
-                    str(comment.get("comment_id") or ""),
-                    _comment_feishu_payload(comment, platform),
-                )
-                for comment in comments
-            ]
+        prepared = [
+            (
+                str(comment.get("comment_id") or ""),
+                _comment_feishu_payload(comment, platform),
+            )
+            for comment in comments
+        ]
         for comment_id, payload in prepared:
             if not comment_id:
                 continue
-            if not is_douyin and comment_id in existing_ids:
+            if comment_id in existing_ids:
                 continue
             await self.repository.enqueue_sync(
                 target_table=target,
-                business_key=f"comment:{platform.value}:{comment_id}",
+                business_key=f"comment:xhs:{comment_id}",
                 payload=payload,
                 force_create=(
                     inventory_loaded and comment_id not in existing_ids
+                ),
+            )
+            queued += 1
+        return queued
+
+    async def queue_douyin_tag_comments(self) -> int:
+        comments = (
+            await self.repository.list_douyin_tag_comment_payloads()
+        )
+        return await self._queue_douyin_comments(
+            comments,
+            target="douyin_tag_comments",
+            business_key_prefix="tag-comment:dy:",
+            view_id="",
+            include_aweme_in_identity=True,
+        )
+
+    async def _queue_douyin_comments(
+        self,
+        comments: list[dict[str, Any]],
+        *,
+        target: str,
+        business_key_prefix: str,
+        view_id: str,
+        include_aweme_in_identity: bool = False,
+    ) -> int:
+        table_id = self._table_id(target)
+        existing_ids: set[str] = set()
+        inventory_loaded = False
+        try:
+            existing = await asyncio.to_thread(
+                self.client.iter_records,
+                self.settings.feishu.app_token,
+                table_id,
+                view_id,
+            )
+            existing_ids = {
+                _douyin_comment_identity(
+                    record.get("fields") or {},
+                    include_aweme=include_aweme_in_identity,
+                )
+                for record in existing
+            }
+            inventory_loaded = True
+        except FeishuError:
+            pass
+
+        queued = 0
+        for comment_id, payload in build_douyin_comment_payloads(comments):
+            identity = _douyin_comment_identity(
+                payload,
+                include_aweme=include_aweme_in_identity,
+            )
+            await self.repository.enqueue_sync(
+                target_table=target,
+                business_key=f"{business_key_prefix}{identity}",
+                payload=payload,
+                force_create=(
+                    inventory_loaded and identity not in existing_ids
                 ),
             )
             queued += 1
@@ -220,6 +279,9 @@ class OutboxSynchronizer:
             "douyin_stats": self.settings.feishu.douyin_stats_table_id,
             "comments": self.settings.feishu.comment_table_id,
             "douyin_comments": self.settings.feishu.douyin_comment_table_id,
+            "douyin_tag_comments": (
+                self.settings.feishu.douyin_tag_comment_table_id
+            ),
             "xhs_creator": self.settings.feishu.xhs_creator_table_id,
             "douyin_creator": self.settings.feishu.douyin_creator_table_id,
         }
@@ -239,6 +301,18 @@ def _comment_feishu_payload(
     cleaned["last_modify_ts"] = _format_timestamp(cleaned.get("last_modify_ts"))
     cleaned["create_time"] = _format_timestamp(cleaned.get("create_time"))
     return cleaned
+
+
+def _douyin_comment_identity(
+    fields: dict[str, Any],
+    *,
+    include_aweme: bool,
+) -> str:
+    comment_id = str(fields.get("评论ID") or "")
+    if not include_aweme:
+        return comment_id
+    aweme_id = str(fields.get("视频ID") or "")
+    return f"{aweme_id}:{comment_id}"
 
 
 def _created_record_ids(responses: list[dict[str, Any]]) -> list[str]:

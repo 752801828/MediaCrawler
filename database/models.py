@@ -20,7 +20,7 @@
 # optional creator_hash column remains for backwards-compatible grouping, but
 # it does not replace the original platform user identifiers.
 
-from sqlalchemy import BigInteger, Column, Integer, String, Text
+from sqlalchemy import BigInteger, Column, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -119,6 +119,38 @@ class DouyinAweme(Base):
 
 class DouyinAwemeComment(Base):
     __tablename__ = 'douyin_aweme_comment'
+    id = Column(Integer, primary_key=True, comment='主键ID')
+    user_id = Column(String(64), index=True, comment='用户ID')
+    sec_uid = Column(String(128), comment='Sec UID')
+    short_user_id = Column(String(64), comment='短用户ID')
+    user_unique_id = Column(String(64), comment='用户唯一ID')
+    creator_hash = Column(String(64), index=True, comment='创作者兼容哈希')
+    nickname = Column(Text, comment='用户昵称')
+    avatar = Column(Text, comment='用户头像')
+    user_signature = Column(Text, comment='用户签名')
+    ip_location = Column(Text, comment='IP归属地')
+    add_ts = Column(BigInteger, comment='添加时间戳')
+    last_modify_ts = Column(BigInteger, comment='最后修改时间戳')
+    comment_id = Column(String(255), index=True, comment='评论ID')
+    aweme_id = Column(String(255), index=True, comment='作品ID')
+    content = Column(Text, comment='评论内容')
+    create_time = Column(BigInteger, comment='创建时间戳')
+    sub_comment_count = Column(Text, comment='子评论数')
+    parent_comment_id = Column(String(255), comment='父评论ID')
+    like_count = Column(Text, default='0', comment='点赞数')
+    pictures = Column(Text, default='', comment='图片')
+
+
+class DouyinTagAwemeComment(Base):
+    __tablename__ = 'douyin_tag_aweme_comment'
+    __table_args__ = (
+        UniqueConstraint(
+            'aweme_id',
+            'comment_id',
+            name='uq_douyin_tag_aweme_comment_identity',
+        ),
+    )
+
     id = Column(Integer, primary_key=True, comment='主键ID')
     user_id = Column(String(64), index=True, comment='用户ID')
     sec_uid = Column(String(128), comment='Sec UID')

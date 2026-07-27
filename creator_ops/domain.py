@@ -46,6 +46,7 @@ class Task:
     get_comments: bool = False
     persist_profile: bool = False
     tag_targets: tuple[DouyinTagTarget, ...] = ()
+    published_after: date | None = None
 
 
 @dataclass(frozen=True)

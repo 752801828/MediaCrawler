@@ -97,7 +97,7 @@ def test_comment_feishu_payload_preserves_xhs_raw_identity():
 
 
 @pytest.mark.asyncio
-async def test_queue_douyin_roots_updates_existing_and_skips_children(
+async def test_queue_douyin_uploads_roots_and_children(
     tmp_path: Path,
 ):
     class Client:
@@ -141,10 +141,11 @@ async def test_queue_douyin_roots_updates_existing_and_skips_children(
 
     queued = await syncer.queue_platform_comments(Platform.DOUYIN)
 
-    assert queued == 2
+    assert queued == 3
     by_key = {row["business_key"]: row for row in repo.queued}
     assert set(by_key) == {
         "comment:dy:existing-root",
+        "comment:dy:existing-child",
         "comment:dy:new-root",
     }
     assert by_key["comment:dy:existing-root"]["force_create"] is False
@@ -156,6 +157,10 @@ async def test_queue_douyin_roots_updates_existing_and_skips_children(
     assert (
         by_key["comment:dy:existing-root"]["payload"]["用户昵称"]
         == "已有一级评论"
+    )
+    assert (
+        by_key["comment:dy:existing-child"]["payload"]["回复内容ID"]
+        == "existing-root"
     )
 
 
@@ -192,6 +197,57 @@ async def test_queue_comments_does_not_force_create_when_inventory_fails(
 
     assert queued == 1
     assert repo.queued[0]["force_create"] is False
+
+
+@pytest.mark.asyncio
+async def test_queue_tag_comments_uses_isolated_target_and_table(
+    tmp_path: Path,
+):
+    class Client:
+        def __init__(self):
+            self.inventory_calls = []
+
+        def iter_records(self, app_token, table_id, view_id):
+            self.inventory_calls.append((app_token, table_id, view_id))
+            return []
+
+    class Repo:
+        def __init__(self):
+            self.queued = []
+
+        async def list_douyin_tag_comment_payloads(self):
+            return [
+                {
+                    "id": "9",
+                    "comment_id": "tag-child",
+                    "aweme_id": "tag-video",
+                    "parent_comment_id": "tag-root",
+                    "user_unique_id": "novsight",
+                    "nickname": "官号",
+                    "content": "已回复",
+                }
+            ]
+
+        async def enqueue_sync(self, **kwargs):
+            self.queued.append(kwargs)
+            return 1
+
+    client = Client()
+    repo = Repo()
+    syncer = OutboxSynchronizer(settings_for(tmp_path), client, repo)
+
+    queued = await syncer.queue_douyin_tag_comments()
+
+    assert queued == 1
+    assert client.inventory_calls == [
+        ("app-token", "tbl2YGN6CJszL4Ri", "")
+    ]
+    assert repo.queued[0]["target_table"] == "douyin_tag_comments"
+    assert repo.queued[0]["business_key"] == (
+        "tag-comment:dy:tag-video:tag-child"
+    )
+    assert repo.queued[0]["payload"]["回复内容ID"] == "tag-root"
+    assert repo.queued[0]["payload"]["是否回复"] == "是"
 
 
 @pytest.mark.asyncio
@@ -440,7 +496,9 @@ async def test_runner_continues_after_one_creator_task_fails(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_tag_task_does_not_queue_comment_or_feishu_sync(tmp_path: Path):
+async def test_tag_task_queues_isolated_comments_without_feishu_delivery(
+    tmp_path: Path,
+):
     settings = settings_for(tmp_path)
     events = []
     accounts = [
@@ -488,8 +546,9 @@ async def test_tag_task_does_not_queue_comment_or_feishu_sync(tmp_path: Path):
             events.append(f"run:{kwargs['status']}")
 
     class Syncer:
-        async def queue_platform_comments(self, _platform):
-            raise AssertionError("Tag task must not queue comment sync")
+        async def queue_douyin_tag_comments(self):
+            events.append("queue:tag-comments")
+            return 1
 
         async def deliver_pending(self):
             raise AssertionError("collect-only must not write Feishu")
@@ -517,6 +576,7 @@ async def test_tag_task_does_not_queue_comment_or_feishu_sync(tmp_path: Path):
         "db",
         "task:douyin_tag_content",
         "public:douyin_tag_content",
+        "queue:tag-comments",
         "finish:True",
         "run:succeeded",
     ]

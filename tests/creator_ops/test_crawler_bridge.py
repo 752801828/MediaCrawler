@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -16,6 +17,7 @@ from creator_ops.domain import (
     Task,
     TaskKind,
 )
+from var import douyin_comment_store_var
 
 
 def test_crawler_config_scope_restores_globals_after_error():
@@ -339,6 +341,17 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
         async def upsert_many(self, rows):
             saved_rows.extend(rows)
 
+        async def list_recent_aweme_ids(
+            self,
+            tag_ids,
+            *,
+            published_after,
+        ):
+            events.append(
+                ("recent", tag_ids, published_after)
+            )
+            return ("aweme-1",)
+
     class FakeCrawler:
         async def start(self):
             events.append("start")
@@ -353,6 +366,15 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
                         "statistics": {"play_count": 100},
                     }
                 ],
+            )
+
+        async def batch_get_note_comments(self, aweme_ids):
+            events.append(
+                (
+                    "comments",
+                    tuple(aweme_ids),
+                    douyin_comment_store_var.get(),
+                )
             )
 
         async def close(self):
@@ -372,6 +394,7 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
             is_main=False,
             is_water=True,
         ),
+        get_comments=True,
         tag_targets=(
             DouyinTagTarget(
                 tag_id="7322391300177987638",
@@ -379,6 +402,7 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
                 tag_url="https://www.douyin.com/hashtag/7322391300177987638",
             ),
         ),
+        published_after=date(2026, 5, 27),
     )
 
     await run_public_task(
@@ -388,7 +412,17 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
         tag_repository=TagRepository(),
     )
 
-    assert events == ["db", "start", "close"]
+    assert events == [
+        "db",
+        "start",
+        (
+            "recent",
+            ("7322391300177987638",),
+            date(2026, 5, 27),
+        ),
+        ("comments", ("aweme-1",), "tag"),
+        "close",
+    ]
     assert saved_rows[0]["tag_id"] == "7322391300177987638"
     assert saved_rows[0]["aweme_id"] == "aweme-1"
     assert saved_rows[0]["author_id"] == "author-1"

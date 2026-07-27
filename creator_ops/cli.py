@@ -9,7 +9,7 @@ import typer
 from creator_ops.config import Settings, SettingsError, load_settings
 from creator_ops.domain import TaskKind
 from creator_ops.douyin_stats_comments import (
-    DEFAULT_DOUYIN_COMMENTS_AFTER,
+    rolling_month_cutoff,
 )
 from creator_ops.migrate import migrate_legacy_creator_history
 from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
@@ -46,9 +46,12 @@ def sync_only() -> None:
 @app.command("douyin-stats-comments")
 def douyin_stats_comments(
     after_date: str = typer.Option(
-        DEFAULT_DOUYIN_COMMENTS_AFTER.isoformat(),
+        "",
         "--after",
-        help="Only works published strictly after this date (YYYY-MM-DD).",
+        help=(
+            "Include works published on or after this date (YYYY-MM-DD). "
+            "Defaults to two calendar months ago."
+        ),
     ),
     dry_run: bool = typer.Option(
         False,
@@ -56,14 +59,17 @@ def douyin_stats_comments(
         help="Read, filter, and plan targets without opening the crawler.",
     ),
 ) -> None:
-    try:
-        parsed_after = date.fromisoformat(after_date)
-    except ValueError as exc:
-        typer.echo(
-            "Invalid --after date; expected YYYY-MM-DD.",
-            err=True,
-        )
-        raise typer.Exit(2) from exc
+    if after_date:
+        try:
+            parsed_after = date.fromisoformat(after_date)
+        except ValueError as exc:
+            typer.echo(
+                "Invalid --after date; expected YYYY-MM-DD.",
+                err=True,
+            )
+            raise typer.Exit(2) from exc
+    else:
+        parsed_after = rolling_month_cutoff()
     _run(
         dry_run=dry_run,
         task_kinds={TaskKind.DOUYIN_STATS_COMMENTS},

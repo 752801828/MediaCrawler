@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from sqlalchemy import select
@@ -56,3 +56,23 @@ class DouyinTagRepository:
                 await session.flush()
                 saved_ids.append(int(row.id))
         return saved_ids
+
+    async def list_recent_aweme_ids(
+        self,
+        tag_ids: tuple[str, ...],
+        *,
+        published_after: date,
+    ) -> tuple[str, ...]:
+        if not tag_ids:
+            return ()
+        boundary = datetime.combine(published_after, time.min)
+        async with self.session_factory() as session:
+            result = await session.scalars(
+                select(DouyinTagAweme.aweme_id)
+                .where(
+                    DouyinTagAweme.tag_id.in_(tag_ids),
+                    DouyinTagAweme.published_at >= boundary,
+                )
+                .distinct()
+            )
+            return tuple(sorted(set(result.all())))
