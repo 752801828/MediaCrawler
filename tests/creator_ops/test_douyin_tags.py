@@ -5,6 +5,7 @@ import pytest
 from creator_ops.douyin_tags import (
     DouyinTagTarget,
     extract_douyin_tag_aweme,
+    is_novsight_tag_aweme,
     parse_douyin_tag_target,
 )
 
@@ -80,6 +81,7 @@ def test_extract_tag_aweme_maps_stable_fields_and_raw_json():
         "author": {
             "uid": "author-1",
             "sec_uid": "sec-1",
+            "unique_id": "author-name",
             "nickname": "Author",
             "account_region": "CN",
             "custom_verify": "Verified",
@@ -112,6 +114,7 @@ def test_extract_tag_aweme_maps_stable_fields_and_raw_json():
 
     assert row["aweme_id"] == "aweme-1"
     assert row["author_id"] == "author-1"
+    assert row["author_unique_id"] == "author-name"
     assert row["published_at"] == datetime.fromtimestamp(1720000000)
     assert row["duration_ms"] == 12345
     assert row["cover_url"] == "https://cover"
@@ -119,3 +122,12 @@ def test_extract_tag_aweme_maps_stable_fields_and_raw_json():
     assert row["play_count"] == 1000
     assert '"aweme_id":"aweme-1"' in row["raw_aweme_json"]
     assert "Cookie" not in row["raw_aweme_json"]
+
+
+def test_identifies_novsight_tag_aweme_case_insensitively():
+    assert is_novsight_tag_aweme(
+        {"author": {"unique_id": "  NoVsIgHt  "}}
+    )
+    assert not is_novsight_tag_aweme(
+        {"author": {"unique_id": "other-account"}}
+    )

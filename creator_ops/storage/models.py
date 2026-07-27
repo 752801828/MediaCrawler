@@ -169,6 +169,7 @@ class DouyinTagAweme(Base):
     play_url = Column(Text, nullable=False, default="")
 
     author_nickname = Column(Text, nullable=False, default="")
+    author_unique_id = Column(String(255), nullable=False, default="", index=True)
     author_account_region = Column(String(64), nullable=False, default="")
     author_custom_verify = Column(Text, nullable=False, default="")
     author_enterprise_verify_reason = Column(Text, nullable=False, default="")

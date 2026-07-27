@@ -82,6 +82,7 @@ def tag_row(**overrides):
         "cover_url": "",
         "play_url": "",
         "author_nickname": "Author",
+        "author_unique_id": "",
         "author_account_region": "",
         "author_custom_verify": "",
         "author_enterprise_verify_reason": "",
@@ -167,6 +168,24 @@ async def test_tag_repository_lists_only_recent_unique_awemes(
                 aweme_id="other",
                 author_id="author-other",
                 published_at=datetime(2026, 7, 1, 0, 0),
+            ),
+            tag_row(
+                tag_id="tag-1",
+                aweme_id="official",
+                author_id="official-author",
+                author_unique_id=" NoVsIgHt ",
+                published_at=datetime(2026, 7, 1, 0, 0),
+            ),
+            tag_row(
+                tag_id="tag-1",
+                aweme_id="legacy-official",
+                author_id="legacy-official-author",
+                author_unique_id="",
+                published_at=datetime(2026, 7, 1, 0, 0),
+                raw_aweme_json=(
+                    '{"aweme_id":"legacy-official",'
+                    '"author":{"unique_id":"novsight"}}'
+                ),
             ),
         ]
     )

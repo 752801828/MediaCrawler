@@ -361,8 +361,19 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
                 0,
                 [
                     {
+                        "aweme_id": "official-aweme",
+                        "author": {
+                            "uid": "official-author",
+                            "unique_id": "novsight",
+                        },
+                    },
+                    {
                         "aweme_id": "aweme-1",
-                        "author": {"uid": "author-1", "sec_uid": "sec-1"},
+                        "author": {
+                            "uid": "author-1",
+                            "sec_uid": "sec-1",
+                            "unique_id": "customer-account",
+                        },
                         "statistics": {"play_count": 100},
                     }
                 ],
@@ -426,6 +437,7 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
     assert saved_rows[0]["tag_id"] == "7322391300177987638"
     assert saved_rows[0]["aweme_id"] == "aweme-1"
     assert saved_rows[0]["author_id"] == "author-1"
+    assert saved_rows[0]["author_unique_id"] == "customer-account"
 
 
 def test_tag_task_banner_identifies_water_profile_and_target():

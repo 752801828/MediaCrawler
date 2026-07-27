@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import date, datetime, time
@@ -9,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db_session import get_session
+from creator_ops.douyin_tags import is_novsight_tag_aweme
 
 from .models import DouyinTagAweme
 
@@ -68,11 +70,28 @@ class DouyinTagRepository:
         boundary = datetime.combine(published_after, time.min)
         async with self.session_factory() as session:
             result = await session.scalars(
-                select(DouyinTagAweme.aweme_id)
+                select(DouyinTagAweme)
                 .where(
                     DouyinTagAweme.tag_id.in_(tag_ids),
                     DouyinTagAweme.published_at >= boundary,
                 )
-                .distinct()
             )
-            return tuple(sorted(set(result.all())))
+            aweme_ids = {
+                row.aweme_id
+                for row in result
+                if not _is_novsight_tag_row(row)
+            }
+            return tuple(sorted(aweme_ids))
+
+
+def _is_novsight_tag_row(row: DouyinTagAweme) -> bool:
+    if str(row.author_unique_id or "").strip().casefold() == "novsight":
+        return True
+    try:
+        raw_aweme = json.loads(row.raw_aweme_json or "{}")
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(raw_aweme, dict)
+        and is_novsight_tag_aweme(raw_aweme)
+    )

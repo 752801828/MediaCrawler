@@ -10,7 +10,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import config
 from playwright.async_api import Error as PlaywrightError
 
-from creator_ops.douyin_tags import extract_douyin_tag_aweme
+from creator_ops.douyin_tags import (
+    extract_douyin_tag_aweme,
+    is_novsight_tag_aweme,
+)
 from creator_ops.domain import Platform, Task, TaskKind
 from tools import utils
 from var import douyin_comment_store_var
@@ -135,6 +138,13 @@ async def run_public_task(
             async def save_tag_page(target, cursor, aweme_list):
                 rows = []
                 for aweme in aweme_list:
+                    if is_novsight_tag_aweme(aweme):
+                        utils.logger.info(
+                            "[creator_ops.run_public_task] "
+                            "跳过NOVSIGHT官号Tag作品 aweme_id=%s",
+                            aweme.get("aweme_id", "unknown"),
+                        )
+                        continue
                     try:
                         rows.append(
                             extract_douyin_tag_aweme(

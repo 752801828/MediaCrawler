@@ -8,6 +8,9 @@ from urllib.parse import urlsplit
 from creator_ops.domain import DouyinTagTarget
 
 
+NOVSIGHT_UNIQUE_ID = "novsight"
+
+
 def parse_douyin_tag_target(tag_name: Any, value: Any) -> DouyinTagTarget:
     url = _field_text(value)
     if not url:
@@ -67,6 +70,7 @@ def extract_douyin_tag_aweme(
         "cover_url": _first_url(video.get("cover")),
         "play_url": _first_url(video.get("play_addr")),
         "author_nickname": _field_text(author.get("nickname")),
+        "author_unique_id": _field_text(author.get("unique_id")),
         "author_account_region": _field_text(author.get("account_region")),
         "author_custom_verify": _field_text(author.get("custom_verify")),
         "author_enterprise_verify_reason": _field_text(
@@ -86,6 +90,14 @@ def extract_douyin_tag_aweme(
         "video_tag_json": _json(aweme.get("video_tag") or []),
         "raw_aweme_json": _json(aweme),
     }
+
+
+def is_novsight_tag_aweme(aweme: dict[str, Any]) -> bool:
+    author = aweme.get("author") or {}
+    return (
+        _field_text(author.get("unique_id")).casefold()
+        == NOVSIGHT_UNIQUE_ID
+    )
 
 
 def _field_text(value: Any) -> str:
@@ -136,5 +148,6 @@ def _json(value: Any) -> str:
 __all__ = [
     "DouyinTagTarget",
     "extract_douyin_tag_aweme",
+    "is_novsight_tag_aweme",
     "parse_douyin_tag_target",
 ]
