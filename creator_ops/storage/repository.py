@@ -182,6 +182,7 @@ class CreatorOpsRepository:
         target_table: str,
         business_key: str,
         payload: dict[str, Any],
+        force_create: bool = False,
     ) -> int:
         async with self.session_factory() as session:
             return await _enqueue_sync(
@@ -189,6 +190,7 @@ class CreatorOpsRepository:
                 target_table=target_table,
                 business_key=business_key,
                 payload=payload,
+                force_create=force_create,
             )
 
     async def pending_sync(
@@ -339,6 +341,7 @@ async def _enqueue_sync(
     target_table: str,
     business_key: str,
     payload: dict[str, Any],
+    force_create: bool = False,
 ) -> int:
     row = await session.scalar(
         select(CreatorOpsSyncOutbox).where(
@@ -358,8 +361,12 @@ async def _enqueue_sync(
             updated_at=now,
         )
         session.add(row)
-    elif row.payload_json != serialized:
-        row.payload_json = serialized
+    elif row.payload_json != serialized or force_create:
+        if row.payload_json != serialized:
+            row.payload_json = serialized
+        if force_create:
+            row.remote_record_id = ""
+            row.attempts = 0
         row.status = "pending"
         row.last_error = ""
         row.synced_at = None

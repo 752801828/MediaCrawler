@@ -160,6 +160,7 @@ class OutboxSynchronizer:
         )
         table_id = self._table_id(target)
         existing_ids: set[str] = set()
+        inventory_loaded = False
         try:
             existing = await asyncio.to_thread(
                 self.client.iter_records,
@@ -171,6 +172,7 @@ class OutboxSynchronizer:
                 str((record.get("fields") or {}).get("comment_id") or "")
                 for record in existing
             }
+            inventory_loaded = True
         except FeishuError:
             pass
 
@@ -185,6 +187,7 @@ class OutboxSynchronizer:
                 target_table=target,
                 business_key=f"comment:{platform.value}:{comment_id}",
                 payload=payload,
+                force_create=inventory_loaded,
             )
             queued += 1
         return queued

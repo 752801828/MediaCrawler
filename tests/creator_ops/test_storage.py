@@ -110,6 +110,29 @@ async def test_outbox_transitions_from_pending_to_synced(repository):
 
 
 @pytest.mark.asyncio
+async def test_force_create_clears_stale_remote_record(repository):
+    repo, session_maker = repository
+    kwargs = {
+        "target_table": "douyin_comments",
+        "business_key": "comment:dy:comment-1",
+        "payload": {"comment_id": "comment-1", "nickname": "raw-name"},
+    }
+    outbox_id = await repo.enqueue_sync(**kwargs)
+    await repo.mark_sync_succeeded(outbox_id, remote_record_id="deleted-rec")
+
+    same_id = await repo.enqueue_sync(**kwargs, force_create=True)
+
+    assert same_id == outbox_id
+    async with session_maker() as session:
+        row = await session.get(CreatorOpsSyncOutbox, outbox_id)
+    assert row.status == "pending"
+    assert row.remote_record_id == ""
+    assert row.attempts == 0
+    assert row.last_error == ""
+    assert row.synced_at is None
+
+
+@pytest.mark.asyncio
 async def test_comment_payloads_include_raw_platform_identity(repository):
     repo, session_maker = repository
     async with session_maker() as session:

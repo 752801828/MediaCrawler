@@ -10,6 +10,7 @@ import pytest
 
 from creator_ops.config import FeishuSettings, MysqlSettings, Settings
 from creator_ops.domain import MetricRecord, Platform, TaskKind
+from creator_ops.feishu.client import FeishuError
 from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
 from creator_ops.sync import (
     OutboxSynchronizer,
@@ -126,8 +127,37 @@ async def test_queue_comments_skips_existing_masked_history(tmp_path: Path):
     assert queued == 1
     assert len(repo.queued) == 1
     assert repo.queued[0]["business_key"] == "comment:dy:new-comment"
+    assert repo.queued[0]["force_create"] is True
     assert repo.queued[0]["payload"]["user_id"] == "raw-user"
     assert repo.queued[0]["payload"]["nickname"] == "未来原名"
+
+
+@pytest.mark.asyncio
+async def test_queue_comments_does_not_force_create_when_inventory_fails(
+    tmp_path: Path,
+):
+    class Client:
+        def iter_records(self, *_args, **_kwargs):
+            raise FeishuError("inventory unavailable")
+
+    class Repo:
+        def __init__(self):
+            self.queued = []
+
+        async def list_comment_payloads(self, _platform):
+            return [{"comment_id": "comment-1", "nickname": "name"}]
+
+        async def enqueue_sync(self, **kwargs):
+            self.queued.append(kwargs)
+            return 1
+
+    repo = Repo()
+    syncer = OutboxSynchronizer(settings_for(tmp_path), Client(), repo)
+
+    queued = await syncer.queue_platform_comments(Platform.DOUYIN)
+
+    assert queued == 1
+    assert repo.queued[0]["force_create"] is False
 
 
 def test_metric_feishu_payload_includes_content_url():
