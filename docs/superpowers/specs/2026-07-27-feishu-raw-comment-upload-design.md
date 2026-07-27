@@ -28,12 +28,16 @@ This change is forward-only. Existing Feishu records are not rewritten. `queue_p
 
 The uploader does not silently discard fields. If a configured Feishu table lacks a field contained in the raw payload, the existing Feishu schema error path marks the outbox row as failed and reports the failure type. Existing retry and batch behavior remains unchanged.
 
+When the Feishu record inventory is read successfully and an outbox row still points to a remote record that no longer exists, the synchronizer clears the stale remote record ID and recreates the comment. If the inventory request itself fails, remote IDs are left unchanged to avoid duplicate records.
+
 ## Testing
 
 - Verify Douyin payloads preserve raw IDs, nickname, avatar, signature, and IP location.
 - Verify Xiaohongshu payloads preserve raw IDs, nickname, avatar, and IP location.
 - Verify timestamps remain formatted.
 - Verify existing Feishu comment IDs are skipped and therefore historical records are not overwritten.
+- Verify deleted Feishu records clear stale outbox remote IDs and are recreated.
+- Verify a failed Feishu inventory request never clears remote IDs.
 - Run the creator-ops suite and the full suite excluding local Redis integration tests.
 
 ## Non-goals
