@@ -151,6 +151,13 @@ class DouYinCrawler(AbstractCrawler):
                 callback=save_page,
                 collect_result=False,
             )
+        complete_callback = getattr(
+            self,
+            "tag_complete_callback",
+            None,
+        )
+        if complete_callback is not None:
+            await complete_callback()
 
     async def search(self) -> None:
         utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")

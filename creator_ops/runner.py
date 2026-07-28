@@ -139,6 +139,7 @@ class CreatorOpsRunner:
                 else:
                     await self.public_task_runner(task)
                     if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+                        await self.synchronizer.queue_douyin_tag_awemes()
                         await self.synchronizer.queue_douyin_tag_comments()
                     else:
                         await self.synchronizer.queue_platform_comments(task.platform)

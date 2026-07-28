@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -248,6 +248,82 @@ async def test_queue_tag_comments_uses_isolated_target_and_table(
     )
     assert repo.queued[0]["payload"]["回复内容ID"] == "tag-root"
     assert repo.queued[0]["payload"]["是否回复"] == "是"
+
+
+@pytest.mark.asyncio
+async def test_queue_tag_awemes_maps_current_feishu_schema(
+    tmp_path: Path,
+):
+    class Client:
+        def __init__(self):
+            self.inventory_calls = []
+
+        def iter_records(self, app_token, table_id, view_id):
+            self.inventory_calls.append((app_token, table_id, view_id))
+            return []
+
+    class Repo:
+        def __init__(self):
+            self.queued = []
+
+        async def list_douyin_tag_aweme_payloads(self):
+            return [
+                {
+                    "tag_id": "tag-1",
+                    "tag_name": "#越野射灯",
+                    "aweme_id": "video-1",
+                    "author_id": "author-1",
+                    "sec_uid": "sec-1",
+                    "title": "标题",
+                    "description": "文案",
+                    "media_type": 4,
+                    "published_at": datetime(2026, 7, 20, 10, 30),
+                    "share_url": "",
+                    "play_count": 100,
+                    "digg_count": 20,
+                    "comment_count": 3,
+                    "share_count": 4,
+                    "collect_count": 5,
+                    "recommend_count": 6,
+                    "text_extra_json": (
+                        '[{"hashtag_name":"越野射灯"},'
+                        '{"hashtag_name":"越野改装"}]'
+                    ),
+                    "video_tag_json": (
+                        '[{"tag_name":"汽车"}]'
+                    ),
+                    "cover_url": "https://cover",
+                    "author_nickname": "作者",
+                    "author_follower_count": 200,
+                    "author_following_count": 30,
+                }
+            ]
+
+        async def enqueue_sync(self, **kwargs):
+            self.queued.append(kwargs)
+            return 1
+
+    client = Client()
+    repo = Repo()
+    syncer = OutboxSynchronizer(settings_for(tmp_path), client, repo)
+
+    queued = await syncer.queue_douyin_tag_awemes()
+
+    assert queued == 1
+    assert client.inventory_calls == [
+        ("app-token", "tblvrVSK47YIOUHE", "")
+    ]
+    row = repo.queued[0]
+    assert row["target_table"] == "douyin_tag_awemes"
+    assert row["business_key"] == "tag-aweme:tag-1:video-1:author-1"
+    assert row["payload"]["作品分享链接"] == (
+        "https://www.douyin.com/video/video-1"
+    )
+    assert row["payload"]["作品发布时间"] == "2026-07-20 10:30:00"
+    assert row["payload"]["作品tag"] == (
+        "#越野射灯 #越野改装 #汽车"
+    )
+    assert row["payload"]["作者昵称"] == "作者"
 
 
 @pytest.mark.asyncio
@@ -546,6 +622,10 @@ async def test_tag_task_queues_isolated_comments_without_feishu_delivery(
             events.append(f"run:{kwargs['status']}")
 
     class Syncer:
+        async def queue_douyin_tag_awemes(self):
+            events.append("queue:tag-awemes")
+            return 1
+
         async def queue_douyin_tag_comments(self):
             events.append("queue:tag-comments")
             return 1
@@ -576,6 +656,7 @@ async def test_tag_task_queues_isolated_comments_without_feishu_delivery(
         "db",
         "task:douyin_tag_content",
         "public:douyin_tag_content",
+        "queue:tag-awemes",
         "queue:tag-comments",
         "finish:True",
         "run:succeeded",

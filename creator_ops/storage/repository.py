@@ -304,6 +304,43 @@ class CreatorOpsRepository:
             limit=limit,
         )
 
+    async def list_douyin_tag_aweme_payloads(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from creator_ops.douyin_tags import is_novsight_tag_aweme
+
+        from .models import DouyinTagAweme
+
+        async with self.session_factory() as session:
+            statement = select(DouyinTagAweme).order_by(DouyinTagAweme.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.scalars(statement)
+            payloads: list[dict[str, Any]] = []
+            for row in result:
+                try:
+                    raw_aweme = json.loads(row.raw_aweme_json or "{}")
+                except (TypeError, ValueError):
+                    raw_aweme = {}
+                if (
+                    str(row.author_unique_id or "").strip().casefold()
+                    == "novsight"
+                    or (
+                        isinstance(raw_aweme, dict)
+                        and is_novsight_tag_aweme(raw_aweme)
+                    )
+                ):
+                    continue
+                payloads.append(
+                    {
+                        column.name: getattr(row, column.name)
+                        for column in DouyinTagAweme.__table__.columns
+                    }
+                )
+            return payloads
+
     async def _list_douyin_comment_payloads(
         self,
         comment_model: Any,

@@ -163,9 +163,8 @@ async def run_public_task(
                     await tag_repository.upsert_many(rows)
 
             crawler.tag_page_callback = save_tag_page
-        try:
-            await crawler.start()
-            if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+
+            async def collect_tag_comments():
                 if task.published_after is None:
                     raise ValueError(
                         "douyin tag comment task is missing published cutoff"
@@ -184,6 +183,10 @@ async def run_public_task(
                     await crawler.batch_get_note_comments(list(aweme_ids))
                 finally:
                     douyin_comment_store_var.reset(token)
+
+            crawler.tag_complete_callback = collect_tag_comments
+        try:
+            await crawler.start()
         finally:
             await _close_crawler(crawler)
 

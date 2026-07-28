@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from media_platform.douyin.client import DouYinClient
+from media_platform.douyin.core import DouYinCrawler
 from media_platform.douyin.exception import DataFetchError
 
 
@@ -152,3 +153,51 @@ async def test_tag_pagination_raises_nonzero_api_status():
             tag_url="https://www.douyin.com/hashtag/tag",
             crawl_interval=0,
         )
+
+
+@pytest.mark.asyncio
+async def test_tag_complete_callback_runs_inside_tag_crawler_flow():
+    events = []
+    target = SimpleNamespace(
+        tag_id="tag-1",
+        tag_name="Tag",
+        tag_url="https://www.douyin.com/hashtag/tag-1",
+    )
+
+    class Page:
+        async def goto(self, url, **_kwargs):
+            events.append(("goto", url))
+
+    class Client:
+        async def get_tag_all_awemes(self, **kwargs):
+            events.append(("client", kwargs["tag_id"]))
+            await kwargs["callback"](
+                kwargs["tag_id"],
+                0,
+                [{"aweme_id": "video-1"}],
+            )
+
+    async def page_callback(current, cursor, awemes):
+        events.append(
+            ("page", current.tag_id, cursor, awemes[0]["aweme_id"])
+        )
+
+    async def complete_callback():
+        events.append(("complete",))
+
+    crawler = SimpleNamespace(
+        tag_targets=(target,),
+        tag_page_callback=page_callback,
+        tag_complete_callback=complete_callback,
+        context_page=Page(),
+        dy_client=Client(),
+    )
+
+    await DouYinCrawler.get_tag_awemes(crawler)
+
+    assert events == [
+        ("goto", target.tag_url),
+        ("client", "tag-1"),
+        ("page", "tag-1", 0, "video-1"),
+        ("complete",),
+    ]

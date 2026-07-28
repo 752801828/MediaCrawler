@@ -9,7 +9,11 @@ import pytest_asyncio
 from sqlalchemy import UniqueConstraint, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from creator_ops.storage import DouyinTagAweme, DouyinTagRepository
+from creator_ops.storage import (
+    CreatorOpsRepository,
+    DouyinTagAweme,
+    DouyinTagRepository,
+)
 from database.models import Base, DouyinTagAwemeComment
 
 
@@ -196,3 +200,34 @@ async def test_tag_repository_lists_only_recent_unique_awemes(
     )
 
     assert aweme_ids == ("recent",)
+
+
+@pytest.mark.asyncio
+async def test_creator_repository_excludes_owned_tag_awemes(
+    tag_repository,
+):
+    tag_repo, session_maker = tag_repository
+    await tag_repo.upsert_many(
+        [
+            tag_row(
+                aweme_id="customer-video",
+                author_id="customer",
+                author_unique_id="customer-account",
+            ),
+            tag_row(
+                aweme_id="official-video",
+                author_id="official",
+                author_unique_id="novsight",
+            ),
+        ]
+    )
+
+    @asynccontextmanager
+    async def session_factory():
+        async with session_maker() as session:
+            yield session
+
+    repository = CreatorOpsRepository(session_factory=session_factory)
+    rows = await repository.list_douyin_tag_aweme_payloads()
+
+    assert [row["aweme_id"] for row in rows] == ["customer-video"]

@@ -378,6 +378,7 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
                     }
                 ],
             )
+            await self.tag_complete_callback()
 
         async def batch_get_note_comments(self, aweme_ids):
             events.append(

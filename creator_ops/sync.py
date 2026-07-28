@@ -226,6 +226,49 @@ class OutboxSynchronizer:
             include_aweme_in_identity=True,
         )
 
+    async def queue_douyin_tag_awemes(self) -> int:
+        target = "douyin_tag_awemes"
+        table_id = self._table_id(target)
+        existing_keys: set[str] = set()
+        inventory_loaded = False
+        try:
+            existing = await asyncio.to_thread(
+                self.client.iter_records,
+                self.settings.feishu.app_token,
+                table_id,
+                "",
+            )
+            existing_keys = {
+                _douyin_tag_aweme_remote_key(
+                    record.get("fields") or {}
+                )
+                for record in existing
+            }
+            inventory_loaded = True
+        except FeishuError:
+            pass
+
+        rows = await self.repository.list_douyin_tag_aweme_payloads()
+        queued = 0
+        for row in rows:
+            payload = _douyin_tag_aweme_feishu_payload(row)
+            remote_key = _douyin_tag_aweme_remote_key(payload)
+            await self.repository.enqueue_sync(
+                target_table=target,
+                business_key=(
+                    "tag-aweme:"
+                    f"{row.get('tag_id')}:"
+                    f"{row.get('aweme_id')}:"
+                    f"{row.get('author_id')}"
+                ),
+                payload=payload,
+                force_create=(
+                    inventory_loaded and remote_key not in existing_keys
+                ),
+            )
+            queued += 1
+        return queued
+
     async def _queue_douyin_comments(
         self,
         comments: list[dict[str, Any]],
@@ -282,6 +325,9 @@ class OutboxSynchronizer:
             "douyin_tag_comments": (
                 self.settings.feishu.douyin_tag_comment_table_id
             ),
+            "douyin_tag_awemes": (
+                self.settings.feishu.douyin_tag_result_table_id
+            ),
             "xhs_creator": self.settings.feishu.xhs_creator_table_id,
             "douyin_creator": self.settings.feishu.douyin_creator_table_id,
         }
@@ -313,6 +359,81 @@ def _douyin_comment_identity(
         return comment_id
     aweme_id = str(fields.get("视频ID") or "")
     return f"{aweme_id}:{comment_id}"
+
+
+def _douyin_tag_aweme_feishu_payload(
+    fields: dict[str, Any],
+) -> dict[str, str]:
+    aweme_id = _text_value(fields.get("aweme_id"))
+    share_url = _text_value(fields.get("share_url"))
+    if not share_url and aweme_id:
+        share_url = f"https://www.douyin.com/video/{aweme_id}"
+    return {
+        "tag_id": _text_value(fields.get("tag_id")),
+        "tag名称": _text_value(fields.get("tag_name")),
+        "作者id": _text_value(fields.get("author_id")),
+        "sec_uid": _text_value(fields.get("sec_uid")),
+        "作品标题": _text_value(fields.get("title")),
+        "作品文案": _text_value(fields.get("description")),
+        "媒体类型": _text_value(fields.get("media_type")),
+        "作品发布时间": _datetime_text(fields.get("published_at")),
+        "作品分享链接": share_url,
+        "作品播放数": _text_value(fields.get("play_count")),
+        "作品点赞数": _text_value(fields.get("digg_count")),
+        "作品评论数": _text_value(fields.get("comment_count")),
+        "作品分享数": _text_value(fields.get("share_count")),
+        "作品收藏数": _text_value(fields.get("collect_count")),
+        "作品推荐数": _text_value(fields.get("recommend_count")),
+        "作品tag": _douyin_tag_names(fields),
+        "封面图片地址": _text_value(fields.get("cover_url")),
+        "作者昵称": _text_value(fields.get("author_nickname")),
+        "作者粉丝数": _text_value(fields.get("author_follower_count")),
+        "作者关注数": _text_value(fields.get("author_following_count")),
+    }
+
+
+def _douyin_tag_aweme_remote_key(fields: dict[str, Any]) -> str:
+    return ":".join(
+        (
+            _text_value(fields.get("tag_id")),
+            _text_value(fields.get("作品分享链接")),
+        )
+    )
+
+
+def _douyin_tag_names(fields: dict[str, Any]) -> str:
+    names: list[str] = []
+    for source, key in (
+        (fields.get("text_extra_json"), "hashtag_name"),
+        (fields.get("video_tag_json"), "tag_name"),
+    ):
+        try:
+            items = (
+                json.loads(source)
+                if isinstance(source, str)
+                else source
+            )
+        except (TypeError, ValueError):
+            items = []
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = _text_value(item.get(key))
+            if name and name not in names:
+                names.append(name)
+    return " ".join(f"#{name}" for name in names)
+
+
+def _text_value(value: Any) -> str:
+    return "" if value is None else str(value).strip()
+
+
+def _datetime_text(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return _text_value(value)
 
 
 def _created_record_ids(responses: list[dict[str, Any]]) -> list[str]:
