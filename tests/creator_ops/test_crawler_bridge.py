@@ -336,6 +336,24 @@ async def test_run_public_task_preserves_start_error_when_browser_already_closed
 async def test_tag_task_uses_independent_repository_and_tag_callback():
     saved_rows = []
     events = []
+    fake_clients = []
+
+    class FakeClient:
+        def __init__(self):
+            self.profile_calls = []
+            fake_clients.append(self)
+
+        async def get_user_info(self, sec_uid):
+            self.profile_calls.append(sec_uid)
+            if sec_uid == "sec-profile-fails":
+                raise RuntimeError("profile unavailable")
+            return {
+                "user": {
+                    "uid": "author-1",
+                    "sec_uid": sec_uid,
+                    "follower_count": 456,
+                }
+            }
 
     class TagRepository:
         async def upsert_many(self, rows):
@@ -353,6 +371,9 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
             return ("aweme-1",)
 
     class FakeCrawler:
+        def __init__(self):
+            self.dy_client = FakeClient()
+
         async def start(self):
             events.append("start")
             target = self.tag_targets[0]
@@ -374,8 +395,33 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
                             "sec_uid": "sec-1",
                             "unique_id": "customer-account",
                         },
-                        "statistics": {"play_count": 100},
-                    }
+                        "statistics": {"play_count": 0},
+                    },
+                    {
+                        "aweme_id": "aweme-2",
+                        "author": {
+                            "uid": "author-1",
+                            "sec_uid": "sec-1",
+                            "unique_id": "customer-account",
+                        },
+                        "statistics": {"play_count": 0},
+                    },
+                    {
+                        "aweme_id": "blocked-aweme",
+                        "author": {
+                            "uid": "1719260615816915",
+                            "sec_uid": "blocked-sec",
+                        },
+                    },
+                    {
+                        "aweme_id": "aweme-profile-fails",
+                        "author": {
+                            "uid": "author-2",
+                            "sec_uid": "sec-profile-fails",
+                            "unique_id": "customer-account",
+                        },
+                        "statistics": {"play_count": 0},
+                    },
                 ],
             )
             await self.tag_complete_callback()
@@ -439,6 +485,25 @@ async def test_tag_task_uses_independent_repository_and_tag_callback():
     assert saved_rows[0]["aweme_id"] == "aweme-1"
     assert saved_rows[0]["author_id"] == "author-1"
     assert saved_rows[0]["author_unique_id"] == "customer-account"
+    assert [row["aweme_id"] for row in saved_rows] == [
+        "aweme-1",
+        "aweme-2",
+        "aweme-profile-fails",
+    ]
+    assert [row["play_count"] for row in saved_rows] == [
+        None,
+        None,
+        None,
+    ]
+    assert [row["author_follower_count"] for row in saved_rows] == [
+        456,
+        456,
+        None,
+    ]
+    assert fake_clients[0].profile_calls == [
+        "sec-1",
+        "sec-profile-fails",
+    ]
 
 
 def test_tag_task_banner_identifies_water_profile_and_target():

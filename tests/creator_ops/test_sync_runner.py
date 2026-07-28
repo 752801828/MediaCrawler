@@ -296,7 +296,12 @@ async def test_queue_tag_awemes_maps_current_feishu_schema(
                     "author_nickname": "作者",
                     "author_follower_count": 200,
                     "author_following_count": 30,
-                }
+                },
+                {
+                    "tag_id": "tag-1",
+                    "aweme_id": "blocked-video",
+                    "author_id": "1719260615816915",
+                },
             ]
 
         async def enqueue_sync(self, **kwargs):

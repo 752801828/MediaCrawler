@@ -4,7 +4,10 @@ import pytest
 
 from creator_ops.douyin_tags import (
     DouyinTagTarget,
+    enrich_douyin_tag_aweme_row,
     extract_douyin_tag_aweme,
+    is_excluded_douyin_tag_author_id,
+    is_excluded_douyin_tag_aweme,
     is_novsight_tag_aweme,
     parse_douyin_tag_target,
 )
@@ -130,4 +133,80 @@ def test_identifies_novsight_tag_aweme_case_insensitively():
     )
     assert not is_novsight_tag_aweme(
         {"author": {"unique_id": "other-account"}}
+    )
+
+
+def test_enrich_tag_aweme_fills_missing_metrics_without_overwriting_values():
+    target = DouyinTagTarget(
+        "tag-1",
+        "Tag",
+        "https://www.douyin.com/hashtag/tag-1",
+    )
+    aweme = {
+        "aweme_id": "aweme-1",
+        "author": {
+            "uid": "author-1",
+            "sec_uid": "sec-1",
+            "nickname": "List author",
+            "follower_count": 0,
+        },
+        "statistics": {
+            "play_count": 1234,
+            "digg_count": 7,
+        },
+    }
+    row = extract_douyin_tag_aweme(target, aweme, source_cursor=0)
+
+    enriched = enrich_douyin_tag_aweme_row(
+        row,
+        creator_detail={
+            "user": {
+                "nickname": "Profile author",
+                "follower_count": 456,
+                "following_count": 23,
+                "total_favorited": 7890,
+            }
+        },
+    )
+
+    assert enriched["play_count"] == 1234
+    assert enriched["digg_count"] == 7
+    assert enriched["author_follower_count"] == 456
+    assert enriched["author_following_count"] == 23
+    assert enriched["author_total_favorited"] == 7890
+    assert enriched["author_nickname"] == "List author"
+    assert '"follower_count":456' not in enriched["raw_aweme_json"]
+
+
+def test_extract_tag_aweme_keeps_unavailable_public_play_count_blank():
+    target = DouyinTagTarget(
+        "tag-1",
+        "Tag",
+        "https://www.douyin.com/hashtag/tag-1",
+    )
+    row = extract_douyin_tag_aweme(
+        target,
+        {
+            "aweme_id": "aweme-1",
+            "author": {"uid": "author-1"},
+            "statistics": {"play_count": 0},
+        },
+        source_cursor=0,
+    )
+
+    assert row["play_count"] is None
+
+
+def test_excludes_configured_tag_author_id_from_all_known_id_fields():
+    blocked = "1719260615816915"
+
+    assert is_excluded_douyin_tag_author_id(blocked)
+    assert is_excluded_douyin_tag_aweme(
+        {"author": {"uid": blocked}}
+    )
+    assert is_excluded_douyin_tag_aweme(
+        {"author_user_id": blocked, "author": {}}
+    )
+    assert not is_excluded_douyin_tag_aweme(
+        {"author": {"uid": "other-author", "unique_id": "customer"}}
     )

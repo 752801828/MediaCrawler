@@ -9,6 +9,22 @@ from creator_ops.domain import DouyinTagTarget
 
 
 NOVSIGHT_UNIQUE_ID = "novsight"
+EXCLUDED_DOUYIN_TAG_AUTHOR_IDS = frozenset({"1719260615816915"})
+
+_TAG_AUTHOR_INTEGER_FIELDS = {
+    "author_follower_count": ("max_follower_count", "follower_count"),
+    "author_following_count": ("following_count",),
+    "author_total_favorited": ("total_favorited",),
+}
+
+_TAG_AUTHOR_TEXT_FIELDS = {
+    "author_nickname": "nickname",
+    "author_unique_id": "unique_id",
+    "author_account_region": "account_region",
+    "author_custom_verify": "custom_verify",
+    "author_enterprise_verify_reason": "enterprise_verify_reason",
+    "sec_uid": "sec_uid",
+}
 
 
 def parse_douyin_tag_target(tag_name: Any, value: Any) -> DouyinTagTarget:
@@ -38,11 +54,7 @@ def extract_douyin_tag_aweme(
     author = aweme.get("author") or {}
     statistics = aweme.get("statistics") or {}
     video = aweme.get("video") or {}
-    author_id = (
-        _field_text(author.get("uid"))
-        or _nonzero_text(aweme.get("author_user_id"))
-        or _field_text(author.get("sec_uid"))
-    )
+    author_id = douyin_tag_author_id(aweme)
     if not aweme.get("aweme_id") or not author_id:
         raise ValueError("douyin tag aweme is missing unique identifiers")
     create_time = _int_or_none(aweme.get("create_time"))
@@ -76,10 +88,18 @@ def extract_douyin_tag_aweme(
         "author_enterprise_verify_reason": _field_text(
             author.get("enterprise_verify_reason")
         ),
-        "author_follower_count": _int_or_none(author.get("follower_count")),
-        "author_following_count": _int_or_none(author.get("following_count")),
-        "author_total_favorited": _int_or_none(author.get("total_favorited")),
-        "play_count": _int_or_none(statistics.get("play_count")),
+        "author_follower_count": _positive_int_or_none(
+            author.get("follower_count")
+        ),
+        "author_following_count": _positive_int_or_none(
+            author.get("following_count")
+        ),
+        "author_total_favorited": _positive_int_or_none(
+            author.get("total_favorited")
+        ),
+        "play_count": _positive_int_or_none(
+            statistics.get("play_count")
+        ),
         "digg_count": _int_or_none(statistics.get("digg_count")),
         "comment_count": _int_or_none(statistics.get("comment_count")),
         "share_count": _int_or_none(statistics.get("share_count")),
@@ -90,6 +110,55 @@ def extract_douyin_tag_aweme(
         "video_tag_json": _json(aweme.get("video_tag") or []),
         "raw_aweme_json": _json(aweme),
     }
+
+
+def enrich_douyin_tag_aweme_row(
+    row: dict[str, Any],
+    *,
+    creator_detail: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    enriched = dict(row)
+    creator = creator_detail if isinstance(creator_detail, dict) else {}
+    creator_author = creator.get("user") or creator.get("user_info") or {}
+
+    for destination, source_fields in _TAG_AUTHOR_INTEGER_FIELDS.items():
+        if not _is_missing_count(enriched.get(destination)):
+            continue
+        candidate = _first_positive_count(
+            creator_author,
+            source_fields=source_fields,
+        )
+        if candidate is not None:
+            enriched[destination] = candidate
+
+    for destination, source in _TAG_AUTHOR_TEXT_FIELDS.items():
+        if _field_text(enriched.get(destination)):
+            continue
+        candidate = _field_text(creator_author.get(source))
+        if candidate:
+            enriched[destination] = candidate
+
+    return enriched
+
+
+def douyin_tag_author_id(aweme: dict[str, Any]) -> str:
+    author = aweme.get("author") or {}
+    return (
+        _field_text(author.get("uid"))
+        or _nonzero_text(aweme.get("author_user_id"))
+        or _field_text(author.get("sec_uid"))
+    )
+
+
+def is_excluded_douyin_tag_author_id(value: Any) -> bool:
+    return _field_text(value) in EXCLUDED_DOUYIN_TAG_AUTHOR_IDS
+
+
+def is_excluded_douyin_tag_aweme(aweme: dict[str, Any]) -> bool:
+    return (
+        is_excluded_douyin_tag_author_id(douyin_tag_author_id(aweme))
+        or is_novsight_tag_aweme(aweme)
+    )
 
 
 def is_novsight_tag_aweme(aweme: dict[str, Any]) -> bool:
@@ -129,6 +198,32 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _positive_int_or_none(value: Any) -> int | None:
+    parsed = _int_or_none(value)
+    if parsed is None or parsed <= 0:
+        return None
+    return parsed
+
+
+def _is_missing_count(value: Any) -> bool:
+    parsed = _int_or_none(value)
+    return parsed is None or parsed == 0
+
+
+def _first_positive_count(
+    *sources: dict[str, Any],
+    source_fields: tuple[str, ...],
+) -> int | None:
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for field in source_fields:
+            value = _positive_int_or_none(source.get(field))
+            if value is not None:
+                return value
+    return None
+
+
 def _first_url(value: Any) -> str:
     if not isinstance(value, dict):
         return ""
@@ -147,7 +242,12 @@ def _json(value: Any) -> str:
 
 __all__ = [
     "DouyinTagTarget",
+    "EXCLUDED_DOUYIN_TAG_AUTHOR_IDS",
+    "douyin_tag_author_id",
+    "enrich_douyin_tag_aweme_row",
     "extract_douyin_tag_aweme",
+    "is_excluded_douyin_tag_author_id",
+    "is_excluded_douyin_tag_aweme",
     "is_novsight_tag_aweme",
     "parse_douyin_tag_target",
 ]

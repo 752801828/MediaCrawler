@@ -11,8 +11,9 @@ import config
 from playwright.async_api import Error as PlaywrightError
 
 from creator_ops.douyin_tags import (
+    enrich_douyin_tag_aweme_row,
     extract_douyin_tag_aweme,
-    is_novsight_tag_aweme,
+    is_excluded_douyin_tag_aweme,
 )
 from creator_ops.domain import Platform, Task, TaskKind
 from tools import utils
@@ -134,24 +135,25 @@ async def run_public_task(
         crawler = crawler_factory(task.platform.value)
         if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
             crawler.tag_targets = task.tag_targets
+            tag_creator_cache: dict[str, dict[str, Any] | None] = {}
+            tag_play_unavailable_logged = False
 
             async def save_tag_page(target, cursor, aweme_list):
+                nonlocal tag_play_unavailable_logged
                 rows = []
                 for aweme in aweme_list:
-                    if is_novsight_tag_aweme(aweme):
+                    if is_excluded_douyin_tag_aweme(aweme):
                         utils.logger.info(
                             "[creator_ops.run_public_task] "
-                            "跳过NOVSIGHT官号Tag作品 aweme_id=%s",
+                            "跳过排除作者的Tag作品 aweme_id=%s",
                             aweme.get("aweme_id", "unknown"),
                         )
                         continue
                     try:
-                        rows.append(
-                            extract_douyin_tag_aweme(
-                                target,
-                                aweme,
-                                source_cursor=cursor,
-                            )
+                        row = extract_douyin_tag_aweme(
+                            target,
+                            aweme,
+                            source_cursor=cursor,
                         )
                     except ValueError as exc:
                         utils.logger.warning(
@@ -159,6 +161,75 @@ async def run_public_task(
                             aweme.get("aweme_id", "unknown"),
                             exc,
                         )
+                        continue
+
+                    dy_client = getattr(crawler, "dy_client", None)
+                    creator_detail: dict[str, Any] | None = None
+                    sec_uid = str(row.get("sec_uid") or "").strip()
+                    if (
+                        dy_client is not None
+                        and sec_uid
+                        and _missing_count(
+                            row.get("author_follower_count")
+                        )
+                    ):
+                        if sec_uid not in tag_creator_cache:
+                            try:
+                                response = await dy_client.get_user_info(
+                                    sec_uid
+                                )
+                                tag_creator_cache[sec_uid] = (
+                                    response
+                                    if isinstance(response, dict)
+                                    else None
+                                )
+                            except Exception as exc:
+                                tag_creator_cache[sec_uid] = None
+                                utils.logger.warning(
+                                    "[creator_ops.run_public_task] "
+                                    "Tag作者详情补全失败 sec_uid=%s error=%s",
+                                    sec_uid,
+                                    type(exc).__name__,
+                                )
+                        creator_detail = tag_creator_cache[sec_uid]
+                        creator_aweme = {
+                            "author": (
+                                (creator_detail or {}).get("user")
+                                or (creator_detail or {}).get("user_info")
+                                or {}
+                            )
+                        }
+                        if is_excluded_douyin_tag_aweme(creator_aweme):
+                            utils.logger.info(
+                                "[creator_ops.run_public_task] "
+                                "作者详情命中排除作者 aweme_id=%s",
+                                row["aweme_id"],
+                            )
+                            continue
+                        row = enrich_douyin_tag_aweme_row(
+                            row,
+                            creator_detail=creator_detail,
+                        )
+
+                    if (
+                        _missing_count(row.get("play_count"))
+                        and not tag_play_unavailable_logged
+                    ):
+                        utils.logger.warning(
+                            "[creator_ops.run_public_task] "
+                            "抖音公开Tag、作品详情和作者投稿接口均不提供"
+                            "他人作品真实播放数；play_count将保存为空",
+                        )
+                        tag_play_unavailable_logged = True
+                    if _missing_count(
+                        row.get("author_follower_count")
+                    ):
+                        utils.logger.warning(
+                            "[creator_ops.run_public_task] "
+                            "Tag作者粉丝数仍不可用 aweme_id=%s",
+                            row["aweme_id"],
+                        )
+                    rows.append(row)
                 if rows:
                     await tag_repository.upsert_many(rows)
 
@@ -196,6 +267,15 @@ def _absolute_profile_template(parent: Path, template: str) -> str:
     if "%s" not in candidate:
         candidate += "%.0s"
     return candidate
+
+
+def _missing_count(value: Any) -> bool:
+    if value in (None, ""):
+        return True
+    try:
+        return int(value) == 0
+    except (TypeError, ValueError):
+        return True
 
 
 def _emit_task_banner(task: Task) -> None:

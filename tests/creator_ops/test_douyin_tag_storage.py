@@ -145,6 +145,27 @@ async def test_tag_repository_keeps_different_authors_separate(tag_repository):
 
 
 @pytest.mark.asyncio
+async def test_tag_repository_rejects_blocked_author(tag_repository):
+    repository, session_maker = tag_repository
+
+    saved_ids = await repository.upsert_many(
+        [
+            tag_row(
+                aweme_id="blocked-video",
+                author_id="1719260615816915",
+            )
+        ]
+    )
+
+    async with session_maker() as session:
+        count = await session.scalar(
+            select(func.count()).select_from(DouyinTagAweme)
+        )
+    assert saved_ids == []
+    assert count == 0
+
+
+@pytest.mark.asyncio
 async def test_tag_repository_lists_only_recent_unique_awemes(
     tag_repository,
 ):
@@ -221,6 +242,20 @@ async def test_creator_repository_excludes_owned_tag_awemes(
             ),
         ]
     )
+    async with session_maker() as session:
+        now = datetime.now()
+        session.add(
+            DouyinTagAweme(
+                **tag_row(
+                    aweme_id="blocked-video",
+                    author_id="1719260615816915",
+                ),
+                fetched_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
 
     @asynccontextmanager
     async def session_factory():

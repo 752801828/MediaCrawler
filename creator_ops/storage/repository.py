@@ -309,7 +309,10 @@ class CreatorOpsRepository:
         *,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        from creator_ops.douyin_tags import is_novsight_tag_aweme
+        from creator_ops.douyin_tags import (
+            is_excluded_douyin_tag_author_id,
+            is_excluded_douyin_tag_aweme,
+        )
 
         from .models import DouyinTagAweme
 
@@ -325,11 +328,14 @@ class CreatorOpsRepository:
                 except (TypeError, ValueError):
                     raw_aweme = {}
                 if (
-                    str(row.author_unique_id or "").strip().casefold()
-                    == "novsight"
+                    is_excluded_douyin_tag_author_id(row.author_id)
+                    or (
+                        str(row.author_unique_id or "").strip().casefold()
+                        == "novsight"
+                    )
                     or (
                         isinstance(raw_aweme, dict)
-                        and is_novsight_tag_aweme(raw_aweme)
+                        and is_excluded_douyin_tag_aweme(raw_aweme)
                     )
                 ):
                     continue

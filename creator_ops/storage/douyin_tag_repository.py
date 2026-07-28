@@ -10,7 +10,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db_session import get_session
-from creator_ops.douyin_tags import is_novsight_tag_aweme
+from creator_ops.douyin_tags import (
+    is_excluded_douyin_tag_author_id,
+    is_excluded_douyin_tag_aweme,
+)
 
 from .models import DouyinTagAweme
 
@@ -31,6 +34,8 @@ class DouyinTagRepository:
         saved_ids: list[int] = []
         async with self.session_factory() as session:
             for values in rows:
+                if _is_excluded_tag_values(values):
+                    continue
                 row = await session.scalar(
                     select(DouyinTagAweme).where(
                         DouyinTagAweme.tag_id == values["tag_id"],
@@ -79,12 +84,29 @@ class DouyinTagRepository:
             aweme_ids = {
                 row.aweme_id
                 for row in result
-                if not _is_novsight_tag_row(row)
+                if not _is_excluded_tag_row(row)
             }
             return tuple(sorted(aweme_ids))
 
 
-def _is_novsight_tag_row(row: DouyinTagAweme) -> bool:
+def _is_excluded_tag_values(values: dict[str, Any]) -> bool:
+    if is_excluded_douyin_tag_author_id(values.get("author_id")):
+        return True
+    if str(values.get("author_unique_id") or "").strip().casefold() == "novsight":
+        return True
+    try:
+        raw_aweme = json.loads(values.get("raw_aweme_json") or "{}")
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(raw_aweme, dict)
+        and is_excluded_douyin_tag_aweme(raw_aweme)
+    )
+
+
+def _is_excluded_tag_row(row: DouyinTagAweme) -> bool:
+    if is_excluded_douyin_tag_author_id(row.author_id):
+        return True
     if str(row.author_unique_id or "").strip().casefold() == "novsight":
         return True
     try:
@@ -93,5 +115,5 @@ def _is_novsight_tag_row(row: DouyinTagAweme) -> bool:
         return False
     return (
         isinstance(raw_aweme, dict)
-        and is_novsight_tag_aweme(raw_aweme)
+        and is_excluded_douyin_tag_aweme(raw_aweme)
     )

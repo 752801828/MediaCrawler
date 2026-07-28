@@ -11,6 +11,7 @@ from creator_ops.config import Settings
 from creator_ops.douyin_comment_threads import (
     build_douyin_comment_payloads,
 )
+from creator_ops.douyin_tags import is_excluded_douyin_tag_author_id
 from creator_ops.domain import MetricRecord, Platform
 from creator_ops.feishu.client import FeishuClient, FeishuError
 
@@ -251,6 +252,8 @@ class OutboxSynchronizer:
         rows = await self.repository.list_douyin_tag_aweme_payloads()
         queued = 0
         for row in rows:
+            if is_excluded_douyin_tag_author_id(row.get("author_id")):
+                continue
             payload = _douyin_tag_aweme_feishu_payload(row)
             remote_key = _douyin_tag_aweme_remote_key(payload)
             await self.repository.enqueue_sync(
