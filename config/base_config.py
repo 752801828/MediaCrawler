@@ -111,6 +111,10 @@ ENABLE_GET_MEIDAS = False
 # Whether to enable comment crawling mode. Comment crawling is enabled by default.
 ENABLE_GET_COMMENTS = True
 
+# Douyin comment transport used outside creator operations.
+# Supported values: "legacy" and "water_api".
+DOUYIN_COMMENT_FETCH_MODE = "legacy"
+
 # Control the number of crawled first-level comments (single video/post)
 # Deprecated compatibility value. First-level comments are crawled until the platform reports the end.
 CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10

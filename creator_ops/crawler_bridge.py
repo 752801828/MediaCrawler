@@ -27,6 +27,7 @@ _SCOPED_CONFIG_NAMES = (
     "SAVE_DATA_OPTION",
     "ENABLE_GET_COMMENTS",
     "ENABLE_GET_SUB_COMMENTS",
+    "DOUYIN_COMMENT_FETCH_MODE",
     "ENABLE_CDP_MODE",
     "HEADLESS",
     "CDP_HEADLESS",
@@ -68,6 +69,11 @@ def crawler_config_scope(
         config.SAVE_DATA_OPTION = "db"
         config.ENABLE_GET_COMMENTS = get_comments
         config.ENABLE_GET_SUB_COMMENTS = True
+        config.DOUYIN_COMMENT_FETCH_MODE = (
+            "water_api"
+            if platform is Platform.DOUYIN and get_comments
+            else "legacy"
+        )
         config.ENABLE_CDP_MODE = False
         config.HEADLESS = False
         config.CDP_HEADLESS = False
@@ -333,6 +339,15 @@ def _format_task_banner(task: Task) -> str:
         lines.append("  （无）")
     lines.extend(
         [
+            (
+                "评论通道：水号接口优先（失败自动回退旧方式）"
+                if (
+                    task.platform is Platform.DOUYIN
+                    and task.get_comments
+                    and task.profile.is_water
+                )
+                else "评论通道：原项目方式"
+            ),
             f"一级评论：{'开启' if task.get_comments else '关闭'}",
             f"二级评论：{'开启' if sub_comments_enabled else '关闭'}",
             "提示：如出现二维码，请使用与上述账号目录对应的账号扫码",

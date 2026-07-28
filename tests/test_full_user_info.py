@@ -92,11 +92,54 @@ def test_douyin_content_comment_and_creator_keep_original_user_fields(monkeypatc
     assert capture.comment["user_id"] == "dy-user-1"
     assert capture.comment["nickname"] == "完整抖音昵称"
     assert capture.comment["ip_location"] == "上海"
+    assert capture.comment["parent_comment_id"] == ""
 
     asyncio.run(douyin_store.save_creator("dy-user-1", {"user": user}))
     assert capture.creator["user_id"] == "dy-user-1"
     assert capture.creator["nickname"] == "完整抖音昵称"
     assert capture.creator["desc"] == "完整签名"
+
+
+def test_douyin_comment_api_mapping_handles_parent_and_single_image():
+    root = douyin_store.map_douyin_aweme_comment(
+        "aweme-1",
+        {
+            "cid": "root-1",
+            "reply_id": "0",
+            "reply_comment_count": 2,
+            "digg_count": 3,
+            "image_list": [
+                {
+                    "origin_url": {
+                        "url_list": ["https://img/root-only.jpg"],
+                    }
+                }
+            ],
+            "user": {
+                "uid": "user-1",
+                "nickname": "未脱敏昵称",
+            },
+        },
+    )
+    assert root["aweme_id"] == "aweme-1"
+    assert root["parent_comment_id"] == ""
+    assert root["sub_comment_count"] == "2"
+    assert root["pictures"] == "https://img/root-only.jpg"
+    assert root["nickname"] == "未脱敏昵称"
+
+    reply = douyin_store.map_douyin_aweme_comment(
+        "aweme-1",
+        {
+            "cid": "reply-1",
+            "aweme_id": "aweme-1",
+            "reply_id": "another-reply",
+            "_parent_comment_id": "root-1",
+            "user": None,
+        },
+    )
+    assert reply["parent_comment_id"] == "root-1"
+    assert reply["user_id"] is None
+    assert reply["pictures"] == ""
 
 
 def test_xhs_content_comment_and_creator_keep_original_user_fields(monkeypatch):

@@ -27,6 +27,7 @@ def test_crawler_config_scope_restores_globals_after_error():
         "USER_DATA_DIR": config.USER_DATA_DIR,
         "SAVE_DATA_OPTION": config.SAVE_DATA_OPTION,
         "ENABLE_GET_SUB_COMMENTS": config.ENABLE_GET_SUB_COMMENTS,
+        "DOUYIN_COMMENT_FETCH_MODE": config.DOUYIN_COMMENT_FETCH_MODE,
         "XHS_SPECIFIED_NOTE_URL_LIST": list(config.XHS_SPECIFIED_NOTE_URL_LIST),
     }
 
@@ -42,6 +43,7 @@ def test_crawler_config_scope_restores_globals_after_error():
             assert config.CRAWLER_TYPE == "detail"
             assert config.SAVE_DATA_OPTION == "db"
             assert config.is_get_sub_comments_enabled("xhs") is True
+            assert config.DOUYIN_COMMENT_FETCH_MODE == "legacy"
             assert config.XHS_SPECIFIED_NOTE_URL_LIST == ["note-1"]
             raise RuntimeError("stop")
 
@@ -75,6 +77,18 @@ def test_crawler_scope_disables_sub_comments_when_comments_are_disabled():
         get_comments=False,
     ):
         assert config.is_get_sub_comments_enabled("dy") is False
+        assert config.DOUYIN_COMMENT_FETCH_MODE == "legacy"
+
+
+def test_douyin_comment_scope_uses_water_api_mode():
+    with crawler_config_scope(
+        platform=Platform.DOUYIN,
+        crawler_type="detail",
+        user_data_dir="%s_text_data_dir",
+        targets=("target-1",),
+        get_comments=True,
+    ):
+        assert config.DOUYIN_COMMENT_FETCH_MODE == "water_api"
 
 
 @pytest.mark.asyncio
@@ -145,6 +159,7 @@ def test_douyin_comment_task_banner_identifies_account_and_targets(monkeypatch):
     assert "2. 7496135103426481408" in banner
     assert "一级评论：开启" in banner
     assert "二级评论：关闭" in banner
+    assert "评论通道：水号接口优先（失败自动回退旧方式）" in banner
 
 
 def test_xhs_creator_banner_removes_sensitive_query_parameters(monkeypatch):
@@ -215,6 +230,9 @@ async def test_stats_comment_task_uses_detail_mode_and_comments():
             observed["sub_comments"] = (
                 config.is_get_sub_comments_enabled("dy")
             )
+            observed["comment_fetch_mode"] = (
+                config.DOUYIN_COMMENT_FETCH_MODE
+            )
 
         async def close(self):
             return None
@@ -248,6 +266,7 @@ async def test_stats_comment_task_uses_detail_mode_and_comments():
         "targets": ["7000000000000000001"],
         "comments": True,
         "sub_comments": True,
+        "comment_fetch_mode": "water_api",
     }
 
 
