@@ -321,6 +321,7 @@ async def test_queue_tag_awemes_maps_current_feishu_schema(
     row = repo.queued[0]
     assert row["target_table"] == "douyin_tag_awemes"
     assert row["business_key"] == "tag-aweme:tag-1:video-1:author-1"
+    assert "作品播放数" not in row["payload"]
     assert row["payload"]["作品分享链接"] == (
         "https://www.douyin.com/video/video-1"
     )

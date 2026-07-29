@@ -381,7 +381,6 @@ def _douyin_tag_aweme_feishu_payload(
         "媒体类型": _text_value(fields.get("media_type")),
         "作品发布时间": _datetime_text(fields.get("published_at")),
         "作品分享链接": share_url,
-        "作品播放数": _text_value(fields.get("play_count")),
         "作品点赞数": _text_value(fields.get("digg_count")),
         "作品评论数": _text_value(fields.get("comment_count")),
         "作品分享数": _text_value(fields.get("share_count")),
