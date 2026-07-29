@@ -115,6 +115,9 @@ ENABLE_GET_COMMENTS = True
 # Supported values: "legacy" and "water_api".
 DOUYIN_COMMENT_FETCH_MODE = "legacy"
 
+# Request interval used only by Douyin water-account comment API mode.
+DOUYIN_WATER_API_CRAWL_INTERVAL_SEC = 1
+
 # Control the number of crawled first-level comments (single video/post)
 # Deprecated compatibility value. First-level comments are crawled until the platform reports the end.
 CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10

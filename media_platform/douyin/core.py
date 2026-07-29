@@ -301,7 +301,7 @@ class DouYinCrawler(AbstractCrawler):
             browser_context=self.browser_context,
             page=self.context_page,
             callback=douyin_store.batch_update_dy_aweme_comments,
-            crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+            crawl_interval=config.DOUYIN_WATER_API_CRAWL_INTERVAL_SEC,
             fetch_sub_comments=config.is_get_sub_comments_enabled("dy"),
         )
         fallback_semaphore = asyncio.Semaphore(1)
