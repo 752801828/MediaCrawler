@@ -260,7 +260,16 @@ async def test_queue_tag_awemes_maps_current_feishu_schema(
 
         def iter_records(self, app_token, table_id, view_id):
             self.inventory_calls.append((app_token, table_id, view_id))
-            return []
+            return [
+                {
+                    "fields": {
+                        "tag_id": "tag-1",
+                        "作品id": "video-1",
+                        "作者id": "author-1",
+                        "作品分享链接": "https://old-link.example/video-1",
+                    }
+                }
+            ]
 
     class Repo:
         def __init__(self):
@@ -321,6 +330,8 @@ async def test_queue_tag_awemes_maps_current_feishu_schema(
     row = repo.queued[0]
     assert row["target_table"] == "douyin_tag_awemes"
     assert row["business_key"] == "tag-aweme:tag-1:video-1:author-1"
+    assert row["payload"]["作品id"] == "video-1"
+    assert row["force_create"] is False
     assert "作品播放数" not in row["payload"]
     assert row["payload"]["作品分享链接"] == (
         "https://www.douyin.com/video/video-1"

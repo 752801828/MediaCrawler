@@ -374,6 +374,7 @@ def _douyin_tag_aweme_feishu_payload(
     return {
         "tag_id": _text_value(fields.get("tag_id")),
         "tag名称": _text_value(fields.get("tag_name")),
+        "作品id": aweme_id,
         "作者id": _text_value(fields.get("author_id")),
         "sec_uid": _text_value(fields.get("sec_uid")),
         "作品标题": _text_value(fields.get("title")),
@@ -398,7 +399,8 @@ def _douyin_tag_aweme_remote_key(fields: dict[str, Any]) -> str:
     return ":".join(
         (
             _text_value(fields.get("tag_id")),
-            _text_value(fields.get("作品分享链接")),
+            _text_value(fields.get("作品id")),
+            _text_value(fields.get("作者id")),
         )
     )
 
