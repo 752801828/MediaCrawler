@@ -13,6 +13,11 @@ from creator_ops.douyin_stats_comments import (
 )
 from creator_ops.migrate import migrate_legacy_creator_history
 from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
+from creator_ops.scheduled import (
+    NotificationConfigError,
+    load_notifier,
+    run_and_notify,
+)
 
 app = typer.Typer(
     add_completion=False,
@@ -41,6 +46,29 @@ def collect_only(
 @app.command("sync-only")
 def sync_only() -> None:
     _run(sync_only=True)
+
+
+@app.command("scheduled-run")
+def scheduled_run() -> None:
+    settings = _load_or_exit()
+    try:
+        notifier = load_notifier()
+    except NotificationConfigError as exc:
+        typer.echo(f"Configuration error: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    try:
+        summary = asyncio.run(
+            run_and_notify(CreatorOpsRunner(settings), notifier)
+        )
+    except Exception as exc:
+        typer.echo(
+            f"Scheduled creator operations failed: {type(exc).__name__}",
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+    _print_summary(summary)
+    if summary.exit_code:
+        raise typer.Exit(summary.exit_code)
 
 
 @app.command("douyin-stats-comments")
