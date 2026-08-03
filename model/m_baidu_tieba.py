@@ -33,12 +33,15 @@ class TiebaNote(BaseModel):
     desc: str = Field(default="", description="Post description")
     note_url: str = Field(..., description="Post link")
     publish_time: str = Field(default="", description="Publish time")
-    creator_hash: str = Field(default="", description="创作者匿名哈希(不存原始用户链接)")
-    user_nickname: str = Field(default="", description="User nickname (已脱敏)")
+    user_link: str = Field(default="", description="User profile URL")
+    creator_hash: str = Field(default="", description="Creator compatibility hash")
+    user_nickname: str = Field(default="", description="User nickname")
+    user_avatar: str = Field(default="", description="User avatar URL")
     tieba_name: str = Field(..., description="Tieba name")
     tieba_link: str = Field(..., description="Tieba link")
     total_replay_num: int = Field(default=0, description="Total reply count")
     total_replay_page: int = Field(default=0, description="Total reply pages")
+    ip_location: Optional[str] = Field(default="", description="IP location")
     source_keyword: str = Field(default="", description="Source keyword")
 
 
@@ -50,9 +53,12 @@ class TiebaComment(BaseModel):
     comment_id: str = Field(..., description="Comment ID")
     parent_comment_id: str = Field(default="", description="Parent comment ID")
     content: str = Field(..., description="Comment content")
-    creator_hash: str = Field(default="", description="创作者匿名哈希(不存原始用户链接)")
-    user_nickname: str = Field(default="", description="User nickname (已脱敏)")
+    user_link: str = Field(default="", description="User profile URL")
+    creator_hash: str = Field(default="", description="Creator compatibility hash")
+    user_nickname: str = Field(default="", description="User nickname")
+    user_avatar: str = Field(default="", description="User avatar URL")
     publish_time: str = Field(default="", description="Publish time")
+    ip_location: Optional[str] = Field(default="", description="IP location")
     sub_comment_count: int = Field(default=0, description="Sub-comment count")
     note_id: str = Field(..., description="Post ID")
     note_url: str = Field(..., description="Post link")
@@ -63,10 +69,14 @@ class TiebaComment(BaseModel):
 
 class TiebaCreator(BaseModel):
     """
-    Baidu Tieba creator（教学版：个人资料不再落库，仅作内存对象）
+    Baidu Tieba creator
     """
-    creator_hash: str = Field(default="", description="创作者匿名哈希(不存原始用户链接)")
-    user_nickname: str = Field(default="", description="User nickname (已脱敏)")
+    user_id: str = Field(default="", description="User ID")
+    user_name: str = Field(default="", description="Username")
+    nickname: str = Field(default="", description="User nickname")
+    gender: str = Field(default="", description="Gender")
+    avatar: str = Field(default="", description="Avatar URL")
+    ip_location: Optional[str] = Field(default="", description="IP location")
     follows: int = Field(default=0, description="Follows count")
     fans: int = Field(default=0, description="Fans count")
     registration_duration: str = Field(default="", description="Registration duration")

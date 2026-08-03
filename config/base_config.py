@@ -99,6 +99,7 @@ USER_DATA_DIR = "%s_user_data_dir"  # %s will be replaced by platform name
 START_PAGE = 1
 
 # Control the number of crawled videos/posts
+# Deprecated compatibility value. Platform crawlers no longer use it to truncate results.
 CRAWLER_MAX_NOTES_COUNT = 15
 
 # Controlling the number of concurrent crawlers
@@ -110,12 +111,23 @@ ENABLE_GET_MEIDAS = False
 # Whether to enable comment crawling mode. Comment crawling is enabled by default.
 ENABLE_GET_COMMENTS = True
 
+# Douyin comment transport used outside creator operations.
+# Supported values: "legacy" and "water_api".
+DOUYIN_COMMENT_FETCH_MODE = "legacy"
+
+# Request interval used only by Douyin water-account comment API mode.
+DOUYIN_WATER_API_CRAWL_INTERVAL_SEC = 1
+
 # Control the number of crawled first-level comments (single video/post)
+# Deprecated compatibility value. First-level comments are crawled until the platform reports the end.
 CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES = 10
 
-# Whether to enable the mode of crawling second-level comments. By default, crawling of second-level comments is not enabled.
+# Whether to enable the mode of crawling second-level comments.
 # If the old version of the project uses db, you need to refer to schema/tables.sql line 287 to add table fields.
-ENABLE_GET_SUB_COMMENTS = False
+ENABLE_GET_SUB_COMMENTS = True
+
+# Platforms allowed to crawl second-level comments.
+ENABLE_GET_SUB_COMMENTS_PLATFORMS = ("xhs", "dy")
 
 # word cloud related
 # Whether to enable generating comment word clouds

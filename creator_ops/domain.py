@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from enum import Enum
+from pathlib import Path
+from typing import Any
+
+
+class Platform(str, Enum):
+    XHS = "xhs"
+    DOUYIN = "dy"
+
+
+class TaskKind(str, Enum):
+    CREATOR_METRICS = "creator_metrics"
+    CONTENT_DETAIL = "content_detail"
+    CREATOR_CONTENT = "creator_content"
+    DOUYIN_TAG_CONTENT = "douyin_tag_content"
+    DOUYIN_STATS_COMMENTS = "douyin_stats_comments"
+
+
+@dataclass(frozen=True)
+class AccountProfile:
+    platform: Platform
+    template: str
+    path: Path
+    is_main: bool
+    is_water: bool
+
+
+@dataclass(frozen=True)
+class DouyinTagTarget:
+    tag_id: str
+    tag_name: str
+    tag_url: str
+
+
+@dataclass(frozen=True)
+class Task:
+    task_id: str
+    platform: Platform
+    kind: TaskKind
+    profile: AccountProfile
+    targets: tuple[str, ...] = ()
+    get_comments: bool = False
+    persist_profile: bool = False
+    tag_targets: tuple[DouyinTagTarget, ...] = ()
+    published_after: date | None = None
+
+
+@dataclass(frozen=True)
+class MetricRecord:
+    platform: Platform
+    profile_key: str
+    content_key: str
+    title: str
+    published_at: datetime | None
+    snapshot_date: date
+    content_url: str = ""
+    metrics: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class TaskResult:
+    task_id: str
+    success: bool
+    records: tuple[MetricRecord, ...] = ()
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class DataChangeCount:
+    label: str
+    created: int = 0
+    updated: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.created + self.updated
+
+
+@dataclass(frozen=True)
+class TaskExecutionReport:
+    task: Task
+    success: bool
+    elapsed_seconds: float
+    changes: tuple[DataChangeCount, ...] = ()
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class PlatformExecutionReport:
+    platform: Platform
+    tasks: tuple[TaskExecutionReport, ...]
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return sum(task.elapsed_seconds for task in self.tasks)

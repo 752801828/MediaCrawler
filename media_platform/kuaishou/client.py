@@ -226,27 +226,34 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         photo_id: str,
         crawl_interval: float = 1.0,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ):
         """
         Get video all comments including sub comments (V2 REST API)
         :param photo_id: video id
         :param crawl_interval: delay between requests (seconds)
         :param callback: callback function for processing comments
-        :param max_count: max number of comments to fetch
+        :param max_count: deprecated and ignored; comments are fetched until the platform reports the end
         :return: list of all comments
         """
 
         result = []
         pcursor = ""
+        seen_cursors = set()
 
-        while pcursor != "no_more" and len(result) < max_count:
+        while pcursor != "no_more":
+            if pcursor in seen_cursors:
+                utils.logger.warning(
+                    f"[KuaiShouClient.get_video_all_comments] Repeated cursor {pcursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(pcursor)
             comments_res = await self.get_video_comments(photo_id, pcursor)
             # V2 API returns data at top level, not nested in visionCommentList
             pcursor = comments_res.get("pcursorV2", "no_more")
             comments = comments_res.get("rootCommentsV2", [])
-            if len(result) + len(comments) > max_count:
-                comments = comments[: max_count - len(result)]
+            if not comments:
+                break
             if callback:  # If there is a callback function, execute the callback function
                 await callback(photo_id, comments)
             result.extend(comments)
@@ -274,7 +281,7 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
             List of sub comments
         """
-        if not config.ENABLE_GET_SUB_COMMENTS:
+        if not config.is_get_sub_comments_enabled("ks"):
             utils.logger.info(
                 f"[KuaiShouClient.get_comments_all_sub_comments] Crawling sub_comment mode is not enabled"
             )
@@ -334,8 +341,15 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
         """
         result = []
         pcursor = ""
+        seen_cursors = set()
 
         while pcursor != "no_more":
+            if pcursor in seen_cursors:
+                utils.logger.warning(
+                    f"[KuaiShouClient.get_all_videos_by_creator] Repeated cursor {pcursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(pcursor)
             videos_res = await self.get_video_by_creater(user_id, pcursor)
             if not videos_res:
                 utils.logger.error(
@@ -347,6 +361,8 @@ class KuaiShouClient(AbstractApiClient, ProxyRefreshMixin):
             pcursor = vision_profile_photo_list.get("pcursor", "")
 
             videos = vision_profile_photo_list.get("feeds", [])
+            if not videos:
+                break
             utils.logger.info(
                 f"[KuaiShouClient.get_all_videos_by_creator] got user_id:{user_id} videos len : {len(videos)}"
             )

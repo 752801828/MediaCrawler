@@ -1,0 +1,630 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
+from datetime import date, datetime
+from typing import Any
+
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from creator_ops.domain import DataChangeCount, MetricRecord, Platform, Task, TaskKind
+from database.db_session import get_session
+
+from .models import (
+    CreatorAccountMetricSnapshot,
+    CreatorContentMetricSnapshot,
+    CreatorOpsRun,
+    CreatorOpsSyncOutbox,
+    CreatorOpsTask,
+    CreatorPublicContentSnapshot,
+)
+
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
+
+class CreatorOpsRepository:
+    def __init__(self, session_factory: SessionFactory | None = None) -> None:
+        self.session_factory = session_factory or get_session
+
+    async def create_run(self, run_uuid: str) -> int:
+        async with self.session_factory() as session:
+            row = CreatorOpsRun(
+                run_uuid=run_uuid,
+                status="running",
+                started_at=datetime.now(),
+            )
+            session.add(row)
+            await session.flush()
+            return int(row.id)
+
+    async def finish_run(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        total_tasks: int,
+        succeeded_tasks: int,
+        failed_tasks: int,
+    ) -> None:
+        async with self.session_factory() as session:
+            row = await session.get(CreatorOpsRun, run_id)
+            if row is None:
+                raise LookupError(f"creator operations run not found: {run_id}")
+            row.status = status
+            row.finished_at = datetime.now()
+            row.total_tasks = total_tasks
+            row.succeeded_tasks = succeeded_tasks
+            row.failed_tasks = failed_tasks
+
+    async def start_task(self, run_id: int, task: Task) -> int:
+        async with self.session_factory() as session:
+            row = CreatorOpsTask(
+                run_id=run_id,
+                task_key=task.task_id,
+                platform=task.platform.value,
+                kind=task.kind.value,
+                profile_key=task.profile.template,
+                status="running",
+                started_at=datetime.now(),
+            )
+            session.add(row)
+            await session.flush()
+            return int(row.id)
+
+    async def finish_task(self, task_row_id: int, *, success: bool, error: str = "") -> None:
+        async with self.session_factory() as session:
+            row = await session.get(CreatorOpsTask, task_row_id)
+            if row is None:
+                raise LookupError(f"creator operations task not found: {task_row_id}")
+            row.status = "succeeded" if success else "failed"
+            row.error_message = error[:4000]
+            row.finished_at = datetime.now()
+
+    async def upsert_content_snapshot(self, record: MetricRecord) -> int:
+        async with self.session_factory() as session:
+            return await _upsert_content_snapshot(session, record)
+
+    async def save_content_with_outbox(
+        self,
+        record: MetricRecord,
+        *,
+        target_table: str,
+        business_key: str,
+        payload: dict[str, Any],
+    ) -> tuple[int, int]:
+        async with self.session_factory() as session:
+            snapshot_id = await _upsert_content_snapshot(session, record)
+            outbox_id = await _enqueue_sync(
+                session,
+                target_table=target_table,
+                business_key=business_key,
+                payload=payload,
+            )
+            return snapshot_id, outbox_id
+
+    async def upsert_account_snapshot(
+        self,
+        *,
+        platform: str,
+        profile_key: str,
+        snapshot_date: date,
+        metrics: dict[str, Any],
+    ) -> int:
+        async with self.session_factory() as session:
+            row = await session.scalar(
+                select(CreatorAccountMetricSnapshot).where(
+                    CreatorAccountMetricSnapshot.platform == platform,
+                    CreatorAccountMetricSnapshot.profile_key == profile_key,
+                    CreatorAccountMetricSnapshot.snapshot_date == snapshot_date,
+                )
+            )
+            now = datetime.now()
+            if row is None:
+                row = CreatorAccountMetricSnapshot(
+                    platform=platform,
+                    profile_key=profile_key,
+                    snapshot_date=snapshot_date,
+                    metrics_json=_canonical_json(metrics),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.metrics_json = _canonical_json(metrics)
+                row.updated_at = now
+            await session.flush()
+            return int(row.id)
+
+    async def upsert_public_snapshot(
+        self,
+        *,
+        platform: str,
+        content_key: str,
+        creator_hash: str,
+        masked_nickname: str,
+        snapshot_date: date,
+        metrics: dict[str, Any],
+    ) -> int:
+        async with self.session_factory() as session:
+            row = await session.scalar(
+                select(CreatorPublicContentSnapshot).where(
+                    CreatorPublicContentSnapshot.platform == platform,
+                    CreatorPublicContentSnapshot.content_key == content_key,
+                    CreatorPublicContentSnapshot.snapshot_date == snapshot_date,
+                )
+            )
+            now = datetime.now()
+            if row is None:
+                row = CreatorPublicContentSnapshot(
+                    platform=platform,
+                    content_key=content_key,
+                    creator_hash=creator_hash,
+                    masked_nickname=masked_nickname,
+                    snapshot_date=snapshot_date,
+                    metrics_json=_canonical_json(metrics),
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(row)
+            else:
+                row.creator_hash = creator_hash
+                row.masked_nickname = masked_nickname
+                row.metrics_json = _canonical_json(metrics)
+                row.updated_at = now
+            await session.flush()
+            return int(row.id)
+
+    async def enqueue_sync(
+        self,
+        *,
+        target_table: str,
+        business_key: str,
+        payload: dict[str, Any],
+        force_create: bool = False,
+    ) -> int:
+        async with self.session_factory() as session:
+            return await _enqueue_sync(
+                session,
+                target_table=target_table,
+                business_key=business_key,
+                payload=payload,
+                force_create=force_create,
+            )
+
+    async def pending_sync(
+        self,
+        limit: int | None = None,
+    ) -> list[CreatorOpsSyncOutbox]:
+        async with self.session_factory() as session:
+            rows = await session.scalars(
+                select(CreatorOpsSyncOutbox)
+                .where(CreatorOpsSyncOutbox.status.in_(("pending", "failed")))
+                .order_by(CreatorOpsSyncOutbox.id)
+                .limit(limit)
+            )
+            return list(rows)
+
+    async def task_change_counts(
+        self,
+        task: Task,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> tuple[DataChangeCount, ...]:
+        from database.models import (
+            DouyinAweme,
+            DouyinAwemeComment,
+            DouyinTagAwemeComment,
+            DyCreator,
+            XhsNote,
+            XhsNoteComment,
+            XhsCreator,
+        )
+
+        from .models import DouyinTagAweme
+
+        start_ms = int(started_at.timestamp() * 1000)
+        finish_ms = int(finished_at.timestamp() * 1000)
+        definitions: list[tuple[Any, str, Any, Any, tuple[Any, ...]]] = []
+
+        if task.kind is TaskKind.CREATOR_METRICS:
+            definitions.append(
+                (
+                    CreatorContentMetricSnapshot,
+                    "作品指标",
+                    CreatorContentMetricSnapshot.created_at,
+                    CreatorContentMetricSnapshot.updated_at,
+                    (
+                        CreatorContentMetricSnapshot.platform == task.platform.value,
+                        CreatorContentMetricSnapshot.profile_key == task.profile.template,
+                    ),
+                )
+            )
+        elif task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+            tag_ids = tuple(target.tag_id for target in task.tag_targets)
+            definitions.extend(
+                (
+                    (
+                        DouyinTagAweme,
+                        "Tag作品",
+                        DouyinTagAweme.created_at,
+                        DouyinTagAweme.updated_at,
+                        (DouyinTagAweme.tag_id.in_(tag_ids),),
+                    ),
+                    (
+                        DouyinTagAwemeComment,
+                        "Tag评论",
+                        DouyinTagAwemeComment.add_ts,
+                        DouyinTagAwemeComment.last_modify_ts,
+                        (DouyinTagAwemeComment.aweme_id.is_not(None),),
+                    ),
+                )
+            )
+        elif task.kind is TaskKind.DOUYIN_STATS_COMMENTS:
+            aweme_ids = tuple(task.targets)
+            definitions.extend(
+                (
+                    (
+                        DouyinAweme,
+                        "作品",
+                        DouyinAweme.add_ts,
+                        DouyinAweme.last_modify_ts,
+                        (DouyinAweme.aweme_id.in_(aweme_ids),),
+                    ),
+                    (
+                        DouyinAwemeComment,
+                        "评论",
+                        DouyinAwemeComment.add_ts,
+                        DouyinAwemeComment.last_modify_ts,
+                        (DouyinAwemeComment.aweme_id.in_(aweme_ids),),
+                    ),
+                )
+            )
+        elif task.kind is TaskKind.CONTENT_DETAIL:
+            if task.platform is Platform.XHS:
+                definitions.extend(
+                    (
+                        (
+                            XhsNote,
+                            "作品",
+                            XhsNote.add_ts,
+                            XhsNote.last_modify_ts,
+                            (XhsNote.note_id.in_(tuple(task.targets)),),
+                        ),
+                        (
+                            XhsNoteComment,
+                            "评论",
+                            XhsNoteComment.add_ts,
+                            XhsNoteComment.last_modify_ts,
+                            (XhsNoteComment.note_id.in_(tuple(task.targets)),),
+                        ),
+                    )
+                )
+            else:
+                definitions.extend(
+                    (
+                        (
+                            DouyinAweme,
+                            "作品",
+                            DouyinAweme.add_ts,
+                            DouyinAweme.last_modify_ts,
+                            (DouyinAweme.aweme_id.in_(tuple(task.targets)),),
+                        ),
+                        (
+                            DouyinAwemeComment,
+                            "评论",
+                            DouyinAwemeComment.add_ts,
+                            DouyinAwemeComment.last_modify_ts,
+                            (DouyinAwemeComment.aweme_id.in_(tuple(task.targets)),),
+                        ),
+                    )
+                )
+        elif task.kind is TaskKind.CREATOR_CONTENT:
+            if task.platform is Platform.XHS:
+                definitions.extend(
+                    (
+                        (XhsCreator, "创作者", XhsCreator.add_ts, XhsCreator.last_modify_ts, (XhsCreator.user_id.in_(tuple(task.targets)),)),
+                        (XhsNote, "作品", XhsNote.add_ts, XhsNote.last_modify_ts, (XhsNote.user_id.in_(tuple(task.targets)),)),
+                    )
+                )
+            else:
+                definitions.extend(
+                    (
+                        (DyCreator, "创作者", DyCreator.add_ts, DyCreator.last_modify_ts, (DyCreator.user_id.in_(tuple(task.targets)),)),
+                        (DouyinAweme, "作品", DouyinAweme.add_ts, DouyinAweme.last_modify_ts, (DouyinAweme.user_id.in_(tuple(task.targets)),)),
+                    )
+                )
+
+        changes: list[DataChangeCount] = []
+        async with self.session_factory() as session:
+            for model, label, created_column, updated_column, filters in definitions:
+                is_datetime = created_column.type.python_type is datetime
+                lower = started_at if is_datetime else start_ms
+                upper = finished_at if is_datetime else finish_ms
+                created_filter = and_(
+                    *filters,
+                    created_column >= lower,
+                    created_column <= upper,
+                )
+                updated_filter = and_(
+                    *filters,
+                    updated_column >= lower,
+                    updated_column <= upper,
+                    or_(created_column < lower, created_column.is_(None)),
+                )
+                created = int(
+                    await session.scalar(
+                        select(func.count()).select_from(model).where(created_filter)
+                    )
+                    or 0
+                )
+                updated = int(
+                    await session.scalar(
+                        select(func.count()).select_from(model).where(updated_filter)
+                    )
+                    or 0
+                )
+                if created or updated:
+                    changes.append(DataChangeCount(label, created, updated))
+        return tuple(changes)
+
+    async def mark_sync_succeeded(
+        self,
+        outbox_id: int,
+        remote_record_id: str = "",
+    ) -> None:
+        async with self.session_factory() as session:
+            row = await session.get(CreatorOpsSyncOutbox, outbox_id)
+            if row is None:
+                raise LookupError(f"sync outbox row not found: {outbox_id}")
+            row.status = "synced"
+            if remote_record_id:
+                row.remote_record_id = remote_record_id
+            row.last_error = ""
+            row.synced_at = datetime.now()
+            row.updated_at = row.synced_at
+
+    async def mark_sync_failed(self, outbox_id: int, error: str) -> None:
+        async with self.session_factory() as session:
+            row = await session.get(CreatorOpsSyncOutbox, outbox_id)
+            if row is None:
+                raise LookupError(f"sync outbox row not found: {outbox_id}")
+            row.status = "failed"
+            row.attempts += 1
+            row.last_error = error[:4000]
+            row.updated_at = datetime.now()
+
+    async def list_comment_payloads(
+        self,
+        platform: str,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        if platform == "xhs":
+            from database.models import XhsNoteComment as CommentModel
+
+            content_id_field = "note_id"
+        elif platform == "dy":
+            from database.models import DouyinAwemeComment as CommentModel
+
+            content_id_field = "aweme_id"
+        else:
+            raise ValueError(f"unsupported comment platform: {platform}")
+
+        async with self.session_factory() as session:
+            statement = select(CommentModel).order_by(CommentModel.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.scalars(statement)
+            payloads: list[dict[str, Any]] = []
+            for row in result:
+                payload = {
+                    "id": str(row.id),
+                    "creator_hash": getattr(row, "creator_hash", "") or "",
+                    "user_id": getattr(row, "user_id", "") or "",
+                    "nickname": getattr(row, "nickname", "") or "",
+                    "avatar": getattr(row, "avatar", "") or "",
+                    "ip_location": getattr(row, "ip_location", "") or "",
+                    "add_ts": getattr(row, "add_ts", 0) or 0,
+                    "last_modify_ts": getattr(row, "last_modify_ts", 0) or 0,
+                    "comment_id": getattr(row, "comment_id", "") or "",
+                    "content": getattr(row, "content", "") or "",
+                    "create_time": getattr(row, "create_time", 0) or 0,
+                    "sub_comment_count": getattr(row, "sub_comment_count", 0) or 0,
+                    "parent_comment_id": getattr(row, "parent_comment_id", "") or "",
+                    "like_count": getattr(row, "like_count", 0) or 0,
+                    "pictures": getattr(row, "pictures", "") or "",
+                    content_id_field: getattr(row, content_id_field, "") or "",
+                }
+                if platform == "dy":
+                    payload.update(
+                        {
+                            "sec_uid": getattr(row, "sec_uid", "") or "",
+                            "short_user_id": (
+                                getattr(row, "short_user_id", "") or ""
+                            ),
+                            "user_unique_id": (
+                                getattr(row, "user_unique_id", "") or ""
+                            ),
+                            "user_signature": (
+                                getattr(row, "user_signature", "") or ""
+                            ),
+                        }
+                    )
+                payloads.append(payload)
+            return payloads
+
+    async def list_douyin_tag_comment_payloads(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from database.models import DouyinTagAwemeComment
+
+        return await self._list_douyin_comment_payloads(
+            DouyinTagAwemeComment,
+            limit=limit,
+        )
+
+    async def list_douyin_tag_aweme_payloads(
+        self,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        from creator_ops.douyin_tags import (
+            is_excluded_douyin_tag_author_id,
+            is_excluded_douyin_tag_aweme,
+        )
+
+        from .models import DouyinTagAweme
+
+        async with self.session_factory() as session:
+            statement = select(DouyinTagAweme).order_by(DouyinTagAweme.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.scalars(statement)
+            payloads: list[dict[str, Any]] = []
+            for row in result:
+                try:
+                    raw_aweme = json.loads(row.raw_aweme_json or "{}")
+                except (TypeError, ValueError):
+                    raw_aweme = {}
+                if (
+                    is_excluded_douyin_tag_author_id(row.author_id)
+                    or (
+                        str(row.author_unique_id or "").strip().casefold()
+                        == "novsight"
+                    )
+                    or (
+                        isinstance(raw_aweme, dict)
+                        and is_excluded_douyin_tag_aweme(raw_aweme)
+                    )
+                ):
+                    continue
+                payloads.append(
+                    {
+                        column.name: getattr(row, column.name)
+                        for column in DouyinTagAweme.__table__.columns
+                    }
+                )
+            return payloads
+
+    async def _list_douyin_comment_payloads(
+        self,
+        comment_model: Any,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
+        async with self.session_factory() as session:
+            statement = select(comment_model).order_by(comment_model.id)
+            if limit is not None:
+                statement = statement.limit(limit)
+            result = await session.scalars(statement)
+            return [
+                {
+                    "id": str(row.id),
+                    "creator_hash": row.creator_hash or "",
+                    "user_id": row.user_id or "",
+                    "sec_uid": row.sec_uid or "",
+                    "short_user_id": row.short_user_id or "",
+                    "user_unique_id": row.user_unique_id or "",
+                    "nickname": row.nickname or "",
+                    "avatar": row.avatar or "",
+                    "user_signature": row.user_signature or "",
+                    "ip_location": row.ip_location or "",
+                    "add_ts": row.add_ts or 0,
+                    "last_modify_ts": row.last_modify_ts or 0,
+                    "comment_id": row.comment_id or "",
+                    "aweme_id": row.aweme_id or "",
+                    "content": row.content or "",
+                    "create_time": row.create_time or 0,
+                    "sub_comment_count": row.sub_comment_count or 0,
+                    "parent_comment_id": row.parent_comment_id or "",
+                    "like_count": row.like_count or 0,
+                    "pictures": row.pictures or "",
+                }
+                for row in result
+            ]
+
+
+def _canonical_json(value: dict[str, Any]) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+async def _upsert_content_snapshot(
+    session: AsyncSession,
+    record: MetricRecord,
+) -> int:
+    row = await session.scalar(
+        select(CreatorContentMetricSnapshot).where(
+            CreatorContentMetricSnapshot.platform == record.platform.value,
+            CreatorContentMetricSnapshot.profile_key == record.profile_key,
+            CreatorContentMetricSnapshot.content_key == record.content_key,
+            CreatorContentMetricSnapshot.snapshot_date == record.snapshot_date,
+        )
+    )
+    now = datetime.now()
+    payload = _canonical_json(record.metrics)
+    if row is None:
+        row = CreatorContentMetricSnapshot(
+            platform=record.platform.value,
+            profile_key=record.profile_key,
+            content_key=record.content_key,
+            title=record.title,
+            content_url=record.content_url,
+            published_at=record.published_at,
+            snapshot_date=record.snapshot_date,
+            metrics_json=payload,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+    else:
+        row.title = record.title
+        row.content_url = record.content_url
+        row.published_at = record.published_at
+        row.metrics_json = payload
+        row.updated_at = now
+    await session.flush()
+    return int(row.id)
+
+
+async def _enqueue_sync(
+    session: AsyncSession,
+    *,
+    target_table: str,
+    business_key: str,
+    payload: dict[str, Any],
+    force_create: bool = False,
+) -> int:
+    row = await session.scalar(
+        select(CreatorOpsSyncOutbox).where(
+            CreatorOpsSyncOutbox.target_table == target_table,
+            CreatorOpsSyncOutbox.business_key == business_key,
+        )
+    )
+    now = datetime.now()
+    serialized = _canonical_json(payload)
+    if row is None:
+        row = CreatorOpsSyncOutbox(
+            target_table=target_table,
+            business_key=business_key,
+            payload_json=serialized,
+            status="pending",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(row)
+    elif row.payload_json != serialized or force_create:
+        if row.payload_json != serialized:
+            row.payload_json = serialized
+        if force_create:
+            row.remote_record_id = ""
+            row.attempts = 0
+        row.status = "pending"
+        row.last_error = ""
+        row.synced_at = None
+        row.updated_at = now
+    await session.flush()
+    return int(row.id)

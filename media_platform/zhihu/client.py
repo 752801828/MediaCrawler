@@ -348,7 +348,7 @@ class ZhiHuClient(AbstractApiClient, ProxyRefreshMixin):
         Returns:
 
         """
-        if not config.ENABLE_GET_SUB_COMMENTS:
+        if not config.is_get_sub_comments_enabled("zhihu"):
             return []
 
         all_sub_comments: List[ZhihuComment] = []

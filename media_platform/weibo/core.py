@@ -140,9 +140,6 @@ class WeiboCrawler(AbstractCrawler):
         :return:
         """
         utils.logger.info("[WeiboCrawler.search] Begin search weibo keywords")
-        weibo_limit_count = 10  # weibo limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < weibo_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = weibo_limit_count
         start_page = config.START_PAGE
 
         # Set the search type based on the configuration for weibo
@@ -162,7 +159,7 @@ class WeiboCrawler(AbstractCrawler):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[WeiboCrawler.search] Current search keyword: {keyword}")
             page = 1
-            while (page - start_page + 1) * weibo_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while True:
                 if page < start_page:
                     utils.logger.info(f"[WeiboCrawler.search] Skip page: {page}")
                     page += 1
@@ -171,6 +168,11 @@ class WeiboCrawler(AbstractCrawler):
                 search_res = await self.wb_client.get_note_by_keyword(keyword=keyword, page=page, search_type=search_type)
                 note_id_list: List[str] = []
                 note_list = filter_search_result_card(search_res.get("cards"))
+                if not note_list:
+                    utils.logger.info(
+                        f"[WeiboCrawler.search] No more notes for keyword: {keyword}"
+                    )
+                    break
                 # If full text fetching is enabled, batch get full text of posts
                 note_list = await self.batch_get_notes_full_text(note_list)
                 for note_item in note_list:
@@ -262,7 +264,6 @@ class WeiboCrawler(AbstractCrawler):
                     note_id=note_id,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,  # Use fixed interval instead of random
                     callback=weibo_store.batch_update_weibo_note_comments,
-                    max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
                 )
             except DataFetchError as ex:
                 utils.logger.error(f"[WeiboCrawler.get_note_comments] get note_id: {note_id} comment error: {ex}")

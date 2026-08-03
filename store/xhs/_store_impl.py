@@ -30,7 +30,8 @@ from sqlalchemy.orm import Session
 
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import XhsNote, XhsNoteComment
+from database.models import XhsCreator, XhsNote, XhsNoteComment
+from store.creator_store import upsert_creator
 
 from tools.async_file_writer import AsyncFileWriter
 from tools.time_util import get_current_timestamp
@@ -62,7 +63,7 @@ class XhsCsvStoreImplement(AbstractStore):
 
 
     async def store_creator(self, creator_item: Dict):
-        pass
+        await self.writer.write_to_csv(item_type="creators", item=creator_item)
 
     def flush(self):
         pass
@@ -90,7 +91,9 @@ class XhsJsonStoreImplement(AbstractStore):
         await self.writer.write_single_item_to_json(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator_item: Dict):
-        pass
+        await self.writer.write_single_item_to_json(
+            item_type="creators", item=creator_item
+        )
 
     def flush(self):
         """
@@ -113,7 +116,7 @@ class XhsJsonlStoreImplement(AbstractStore):
         await self.writer.write_to_jsonl(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator_item: Dict):
-        pass
+        await self.writer.write_to_jsonl(item_type="creators", item=creator_item)
 
     def flush(self):
         pass
@@ -137,8 +140,11 @@ class XhsDbStoreImplement(AbstractStore):
         add_ts = int(get_current_timestamp())
         last_modify_ts = int(get_current_timestamp())
         note = XhsNote(
+            user_id=content_item.get("user_id"),
             creator_hash=content_item.get("creator_hash"),
             nickname=content_item.get("nickname"),
+            avatar=content_item.get("avatar"),
+            ip_location=content_item.get("ip_location"),
             add_ts=add_ts,
             last_modify_ts=last_modify_ts,
             note_id=content_item.get("note_id"),
@@ -165,6 +171,11 @@ class XhsDbStoreImplement(AbstractStore):
         last_modify_ts = int(get_current_timestamp())
         update_data = {
             "last_modify_ts": last_modify_ts,
+            "user_id": content_item.get("user_id"),
+            "creator_hash": content_item.get("creator_hash"),
+            "nickname": content_item.get("nickname"),
+            "avatar": content_item.get("avatar"),
+            "ip_location": content_item.get("ip_location"),
             "liked_count": str(content_item.get("liked_count")),
             "collected_count": str(content_item.get("collected_count")),
             "comment_count": str(content_item.get("comment_count")),
@@ -195,8 +206,11 @@ class XhsDbStoreImplement(AbstractStore):
         add_ts = int(get_current_timestamp())
         last_modify_ts = int(get_current_timestamp())
         comment = XhsNoteComment(
+            user_id=comment_item.get("user_id"),
             creator_hash=comment_item.get("creator_hash"),
             nickname=comment_item.get("nickname"),
+            avatar=comment_item.get("avatar"),
+            ip_location=comment_item.get("ip_location"),
             add_ts=add_ts,
             last_modify_ts=last_modify_ts,
             comment_id=comment_item.get("comment_id"),
@@ -215,6 +229,11 @@ class XhsDbStoreImplement(AbstractStore):
         last_modify_ts = int(get_current_timestamp())
         update_data = {
             "last_modify_ts": last_modify_ts,
+            "user_id": comment_item.get("user_id"),
+            "creator_hash": comment_item.get("creator_hash"),
+            "nickname": comment_item.get("nickname"),
+            "avatar": comment_item.get("avatar"),
+            "ip_location": comment_item.get("ip_location"),
             "like_count": str(comment_item.get("like_count")),
             "sub_comment_count": int(comment_item.get("sub_comment_count", 0) or 0),
         }
@@ -227,8 +246,7 @@ class XhsDbStoreImplement(AbstractStore):
         return result.first() is not None
 
     async def store_creator(self, creator_item: Dict):
-        # 教学版：创作者个人资料不再落库
-        pass
+        await upsert_creator(XhsCreator, creator_item)
 
     async def get_all_content(self) -> List[Dict]:
         async with get_session() as session:
@@ -295,8 +313,14 @@ class XhsMongoStoreImplement(AbstractStore):
         Args:
             creator_item: Creator data
         """
-        # 教学版：创作者个人资料不再落库
-        pass
+        user_id = creator_item.get("user_id")
+        if not user_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="creators",
+            query={"user_id": user_id},
+            data=creator_item,
+        )
 
 
 class XhsExcelStoreImplement:

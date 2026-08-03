@@ -33,10 +33,16 @@ from sqlalchemy import select
 import config
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import DouyinAweme, DouyinAwemeComment
+from database.models import (
+    DouyinAweme,
+    DouyinAwemeComment,
+    DouyinTagAwemeComment,
+    DyCreator,
+)
+from store.creator_store import upsert_creator
 from tools import utils, words
 from tools.async_file_writer import AsyncFileWriter
-from var import crawler_type_var
+from var import crawler_type_var, douyin_comment_store_var
 from database.mongodb_store_base import MongoDBStoreBase
 
 
@@ -119,13 +125,25 @@ class DouyinDbStoreImplement(AbstractStore):
             comment_item: comment item dict
         """
         comment_id = comment_item.get("comment_id")
+        aweme_id = comment_item.get("aweme_id")
+        is_tag_comment = douyin_comment_store_var.get() == "tag"
+        comment_model = (
+            DouyinTagAwemeComment
+            if is_tag_comment
+            else DouyinAwemeComment
+        )
         async with get_session() as session:
-            result = await session.execute(select(DouyinAwemeComment).where(DouyinAwemeComment.comment_id == comment_id))
+            criteria = [comment_model.comment_id == comment_id]
+            if is_tag_comment:
+                criteria.append(comment_model.aweme_id == aweme_id)
+            result = await session.execute(
+                select(comment_model).where(*criteria)
+            )
             comment_detail = result.scalar_one_or_none()
 
             if not comment_detail:
                 comment_item["add_ts"] = utils.get_current_timestamp()
-                new_comment = DouyinAwemeComment(**comment_item)
+                new_comment = comment_model(**comment_item)
                 session.add(new_comment)
             else:
                 for key, value in comment_item.items():
@@ -133,8 +151,7 @@ class DouyinDbStoreImplement(AbstractStore):
             await session.commit()
 
     async def store_creator(self, creator: Dict):
-        # 教学版：创作者个人资料不再落库
-        pass
+        await upsert_creator(DyCreator, creator)
 
 
 class DouyinJsonStoreImplement(AbstractStore):
@@ -259,8 +276,14 @@ class DouyinMongoStoreImplement(AbstractStore):
         utils.logger.info(f"[DouyinMongoStoreImplement.store_comment] Saved comment {comment_id} to MongoDB")
 
     async def store_creator(self, creator_item: Dict):
-        # 教学版：创作者个人资料不再落库
-        pass
+        user_id = creator_item.get("user_id")
+        if not user_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="creators",
+            query={"user_id": user_id},
+            data=creator_item,
+        )
 
 
 class DouyinExcelStoreImplement:

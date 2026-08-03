@@ -271,7 +271,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             int,
             typer.Option(
                 "--max_comments_count_singlenotes",
-                help="Maximum number of first-level comments to crawl per post/video",
+                help="Deprecated compatibility option; first-level comments now crawl until the platform reports the end",
                 rich_help_panel="Comment Configuration",
             ),
         ] = config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
@@ -279,7 +279,7 @@ async def parse_cmd(argv: Optional[Sequence[str]] = None):
             int,
             typer.Option(
                 "--crawler_max_notes_count",
-                help="Maximum number of videos/posts to crawl",
+                help="Deprecated compatibility option; posts now crawl until the platform reports the end",
                 rich_help_panel="Basic Configuration",
             ),
         ] = config.CRAWLER_MAX_NOTES_COUNT,

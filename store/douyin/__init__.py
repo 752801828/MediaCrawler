@@ -21,11 +21,11 @@
 # @Author  : relakkes@gmail.com
 # @Time    : 2024/1/14 18:46
 # @Desc    :
-from typing import List
+from typing import Any, Dict, List
 
 import config
 from var import source_keyword_var
-from tools.user_hash import anonymize_user_id, mask_nickname
+from tools.user_hash import anonymize_user_id
 
 from ._store_impl import *
 from .douyin_store_media import *
@@ -86,17 +86,79 @@ def _extract_comment_image_list(comment_item: Dict) -> List[str]:
         List[str]: Comment image list
     """
     images_res: List[str] = []
-    image_list: List[Dict] = comment_item.get("image_list", [])
+    image_list: List[Dict] = comment_item.get("image_list") or []
 
     if not image_list:
         return []
 
     for image in image_list:
-        image_url_list = image.get("origin_url", {}).get("url_list", [])
-        if image_url_list and len(image_url_list) > 1:
-            images_res.append(image_url_list[1])
+        if not isinstance(image, dict):
+            continue
+        for field in ("origin_url", "medium_url", "download_url"):
+            image_info = image.get(field) or {}
+            if not isinstance(image_info, dict):
+                continue
+            image_url_list = image_info.get("url_list") or []
+            if image_url_list:
+                images_res.append(str(image_url_list[0]))
+                break
 
-    return images_res
+    return list(dict.fromkeys(images_res))
+
+
+def _normalized_parent_comment_id(comment_item: Dict[str, Any]) -> str:
+    explicit_parent = comment_item.get("_parent_comment_id")
+    if explicit_parent is not None:
+        return str(explicit_parent).strip()
+    parent_comment_id = comment_item.get("reply_id")
+    if parent_comment_id in (None, "", 0, "0"):
+        return ""
+    return str(parent_comment_id).strip()
+
+
+def map_douyin_aweme_comment(
+    aweme_id: str,
+    comment_item: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Map a Douyin API comment to the existing database schema."""
+    user_info = comment_item.get("user") or {}
+    if not isinstance(user_info, dict):
+        user_info = {}
+    avatar_info = (
+        user_info.get("avatar_medium")
+        or user_info.get("avatar_300x300")
+        or user_info.get("avatar_168x168")
+        or user_info.get("avatar_thumb")
+        or {}
+    )
+    avatar_urls = (
+        avatar_info.get("url_list") or []
+        if isinstance(avatar_info, dict)
+        else []
+    )
+    reply_count = comment_item.get("reply_comment_total")
+    if reply_count is None:
+        reply_count = comment_item.get("reply_comment_count", 0)
+    return {
+        "comment_id": comment_item.get("cid"),
+        "create_time": comment_item.get("create_time"),
+        "aweme_id": str(comment_item.get("aweme_id") or aweme_id),
+        "content": comment_item.get("text"),
+        "user_id": user_info.get("uid"),
+        "sec_uid": user_info.get("sec_uid"),
+        "short_user_id": user_info.get("short_id"),
+        "user_unique_id": user_info.get("unique_id"),
+        "creator_hash": anonymize_user_id(user_info.get("uid")),
+        "nickname": user_info.get("nickname"),
+        "avatar": str(avatar_urls[0]) if avatar_urls else "",
+        "user_signature": user_info.get("signature"),
+        "ip_location": comment_item.get("ip_label", ""),
+        "sub_comment_count": str(reply_count or 0),
+        "like_count": comment_item.get("digg_count") or 0,
+        "last_modify_ts": utils.get_current_timestamp(),
+        "parent_comment_id": _normalized_parent_comment_id(comment_item),
+        "pictures": ",".join(_extract_comment_image_list(comment_item)),
+    }
 
 
 def _extract_content_cover_url(aweme_detail: Dict) -> str:
@@ -165,8 +227,15 @@ async def update_douyin_aweme(aweme_item: Dict):
         "title": aweme_item.get("desc", ""),
         "desc": aweme_item.get("desc", ""),
         "create_time": aweme_item.get("create_time"),
-        "creator_hash": anonymize_user_id(user_info.get("uid")),  # 创作者匿名哈希(不存原始 uid)
-        "nickname": mask_nickname(user_info.get("nickname")),  # 用户昵称(已脱敏)
+        "user_id": user_info.get("uid"),
+        "sec_uid": user_info.get("sec_uid"),
+        "short_user_id": user_info.get("short_id"),
+        "user_unique_id": user_info.get("unique_id"),
+        "creator_hash": anonymize_user_id(user_info.get("uid")),
+        "nickname": user_info.get("nickname"),
+        "avatar": (user_info.get("avatar_thumb") or {}).get("url_list", [""])[0],
+        "user_signature": user_info.get("signature"),
+        "ip_location": aweme_item.get("ip_label", ""),
         "liked_count": str(interact_info.get("digg_count")),
         "collected_count": str(interact_info.get("collect_count")),
         "comment_count": str(interact_info.get("comment_count")),
@@ -192,33 +261,51 @@ async def batch_update_dy_aweme_comments(aweme_id: str, comments: List[Dict]):
 
 async def update_dy_aweme_comment(aweme_id: str, comment_item: Dict):
     comment_aweme_id = comment_item.get("aweme_id")
-    if aweme_id != comment_aweme_id:
+    if comment_aweme_id and str(aweme_id) != str(comment_aweme_id):
         utils.logger.error(f"[store.douyin.update_dy_aweme_comment] comment_aweme_id: {comment_aweme_id} != aweme_id: {aweme_id}")
         return
-    user_info = comment_item.get("user", {})
     comment_id = comment_item.get("cid")
-    parent_comment_id = comment_item.get("reply_id", "0")
-    save_comment_item = {
-        "comment_id": comment_id,
-        "create_time": comment_item.get("create_time"),
-        "aweme_id": aweme_id,
-        "content": comment_item.get("text"),
-        "creator_hash": anonymize_user_id(user_info.get("uid")),  # 创作者匿名哈希(不存原始 uid)
-        "nickname": mask_nickname(user_info.get("nickname")),  # 用户昵称(已脱敏)
-        "sub_comment_count": str(comment_item.get("reply_comment_total", 0)),
-        "like_count": (comment_item.get("digg_count") if comment_item.get("digg_count") else 0),
-        "last_modify_ts": utils.get_current_timestamp(),
-        "parent_comment_id": parent_comment_id,
-        "pictures": ",".join(_extract_comment_image_list(comment_item)),
-    }
+    save_comment_item = map_douyin_aweme_comment(aweme_id, comment_item)
     utils.logger.info(f"[store.douyin.update_dy_aweme_comment] douyin aweme comment: {comment_id}, content: {save_comment_item.get('content')}")
 
     await DouyinStoreFactory.create_store().store_comment(comment_item=save_comment_item)
 
 
 async def save_creator(user_id: str, creator: Dict):
-    # 教学版：创作者个人资料(昵称/性别/头像/签名/IP/粉丝数等)不再落库，防骚扰。
-    return
+    user_info = creator.get("user") or {}
+    gender_map = {0: "未知", 1: "男", 2: "女"}
+    avatar_info = (
+        user_info.get("avatar_300x300")
+        or user_info.get("avatar_medium")
+        or user_info.get("avatar_thumb")
+        or {}
+    )
+    avatar_urls = avatar_info.get("url_list") or []
+    avatar_uri = avatar_info.get("uri")
+    avatar = avatar_urls[0] if avatar_urls else ""
+    if not avatar and avatar_uri:
+        avatar = (
+            f"https://p3-pc.douyinpic.com/img/{avatar_uri}"
+            "~c5_300x300.jpeg?from=2956013662"
+        )
+    local_db_item = {
+        "user_id": user_id,
+        "nickname": user_info.get("nickname"),
+        "gender": gender_map.get(user_info.get("gender"), "未知"),
+        "avatar": avatar,
+        "desc": user_info.get("signature"),
+        "ip_location": user_info.get("ip_location"),
+        "follows": str(user_info.get("following_count", 0)),
+        "fans": str(
+            user_info.get("max_follower_count")
+            or user_info.get("follower_count")
+            or 0
+        ),
+        "interaction": str(user_info.get("total_favorited", 0)),
+        "videos_count": str(user_info.get("aweme_count", 0)),
+        "last_modify_ts": utils.get_current_timestamp(),
+    }
+    await DouyinStoreFactory.create_store().store_creator(local_db_item)
 
 
 async def update_dy_aweme_image(aweme_id, pic_content, extension_file_name):

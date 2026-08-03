@@ -36,7 +36,14 @@ from sqlalchemy.orm import sessionmaker
 import config
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import BilibiliVideoComment, BilibiliVideo, BilibiliUpDynamic
+from database.models import (
+    BilibiliContactInfo,
+    BilibiliUpDynamic,
+    BilibiliUpInfo,
+    BilibiliVideo,
+    BilibiliVideoComment,
+)
+from store.creator_store import upsert_creator
 from tools.async_file_writer import AsyncFileWriter
 from tools import utils, words
 from var import crawler_type_var
@@ -175,12 +182,28 @@ class BiliDbStoreImplement(AbstractStore):
             await session.commit()
 
     async def store_creator(self, creator: Dict):
-        # 教学版：UP 主个人资料不再落库
-        pass
+        await upsert_creator(BilibiliUpInfo, creator)
 
     async def store_contact(self, contact_item: Dict):
-        # 教学版：UP-粉丝关系表已移除，不再存储联系人信息
-        pass
+        up_id = str(contact_item.get("up_id") or "")
+        fan_id = str(contact_item.get("fan_id") or "")
+        if not up_id or not fan_id:
+            return
+        async with get_session() as session:
+            result = await session.execute(
+                select(BilibiliContactInfo).where(
+                    BilibiliContactInfo.up_id == up_id,
+                    BilibiliContactInfo.fan_id == fan_id,
+                )
+            )
+            contact = result.scalar_one_or_none()
+            if contact is None:
+                contact_item["add_ts"] = utils.get_current_timestamp()
+                session.add(BilibiliContactInfo(**contact_item))
+            else:
+                for key, value in contact_item.items():
+                    setattr(contact, key, value)
+            await session.commit()
 
     async def store_dynamic(self, dynamic_item):
         """
@@ -368,8 +391,35 @@ class BiliMongoStoreImplement(AbstractStore):
         utils.logger.info(f"[BiliMongoStoreImplement.store_comment] Saved comment {comment_id} to MongoDB")
 
     async def store_creator(self, creator_item: Dict):
-        # 教学版：UP 主个人资料不再落库
-        pass
+        user_id = creator_item.get("user_id")
+        if not user_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="creators",
+            query={"user_id": user_id},
+            data=creator_item,
+        )
+
+    async def store_contact(self, contact_item: Dict):
+        up_id = contact_item.get("up_id")
+        fan_id = contact_item.get("fan_id")
+        if not up_id or not fan_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="contacts",
+            query={"up_id": up_id, "fan_id": fan_id},
+            data=contact_item,
+        )
+
+    async def store_dynamic(self, dynamic_item: Dict):
+        dynamic_id = dynamic_item.get("dynamic_id")
+        if not dynamic_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="dynamics",
+            query={"dynamic_id": dynamic_id},
+            data=dynamic_item,
+        )
 
 
 class BiliExcelStoreImplement:

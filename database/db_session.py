@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from contextlib import asynccontextmanager
 from .models import Base
+from .schema_migrations import migrate_missing_schema
 import config
 from config.db_config import mysql_db_config, sqlite_db_config, postgres_db_config
 
@@ -82,6 +83,7 @@ async def create_tables(db_type: str = None):
     if engine:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        await migrate_missing_schema(engine)
 
 
 @asynccontextmanager

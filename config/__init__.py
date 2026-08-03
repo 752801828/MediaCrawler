@@ -20,3 +20,18 @@
 
 from .base_config import *
 from .db_config import *
+
+
+def is_get_sub_comments_enabled(
+    platform: str | None = None,
+    comments_enabled: bool | None = None,
+) -> bool:
+    """Return whether second-level comments are enabled for a platform."""
+    target_platform = platform or PLATFORM
+    if comments_enabled is None:
+        comments_enabled = ENABLE_GET_COMMENTS
+    return bool(
+        comments_enabled
+        and ENABLE_GET_SUB_COMMENTS
+        and target_platform in ENABLE_GET_SUB_COMMENTS_PLATFORMS
+    )

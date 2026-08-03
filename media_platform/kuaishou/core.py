@@ -129,9 +129,6 @@ class KuaishouCrawler(AbstractCrawler):
 
     async def search(self):
         utils.logger.info("[KuaishouCrawler.search] Begin search kuaishou keywords")
-        ks_limit_count = 20  # kuaishou limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < ks_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = ks_limit_count
         start_page = config.START_PAGE
         for keyword in config.KEYWORDS.split(","):
             search_session_id = ""
@@ -140,20 +137,27 @@ class KuaishouCrawler(AbstractCrawler):
                 f"[KuaishouCrawler.search] Current search keyword: {keyword}"
             )
             page = 1
-            while (
-                page - start_page + 1
-            ) * ks_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            pcursor = str(page)
+            seen_cursors = set()
+            while True:
                 if page < start_page:
                     utils.logger.info(f"[KuaishouCrawler.search] Skip page: {page}")
                     page += 1
+                    pcursor = str(page)
                     continue
+                if pcursor in seen_cursors:
+                    utils.logger.warning(
+                        f"[KuaishouCrawler.search] Repeated cursor {pcursor}, stop pagination"
+                    )
+                    break
+                seen_cursors.add(pcursor)
                 utils.logger.info(
                     f"[KuaishouCrawler.search] search kuaishou keyword: {keyword}, page: {page}"
                 )
                 video_id_list: List[str] = []
                 videos_res = await self.ks_client.search_info_by_keyword(
                     keyword=keyword,
-                    pcursor=str(page),
+                    pcursor=pcursor,
                     search_session_id=search_session_id,
                 )
                 if not videos_res:
@@ -162,25 +166,35 @@ class KuaishouCrawler(AbstractCrawler):
                     )
                     break
 
-                vision_search_photo: Dict = videos_res.get("visionSearchPhoto")
+                vision_search_photo: Dict = videos_res.get("visionSearchPhoto") or {}
                 if vision_search_photo.get("result") != 1:
                     utils.logger.error(
                         f"[KuaishouCrawler.search] search info by keyword:{keyword} not found data "
                     )
                     break
+                feeds = vision_search_photo.get("feeds") or []
+                if not feeds:
+                    utils.logger.info(
+                        f"[KuaishouCrawler.search] No more videos for keyword:{keyword}"
+                    )
+                    break
                 search_session_id = vision_search_photo.get("searchSessionId", "")
-                for video_detail in vision_search_photo.get("feeds"):
+                next_cursor = vision_search_photo.get("pcursor", "no_more")
+                for video_detail in feeds:
                     video_id_list.append(video_detail.get("photo", {}).get("id"))
                     await kuaishou_store.update_kuaishou_video(video_item=video_detail)
 
                 # batch fetch video comments
                 page += 1
+                pcursor = next_cursor
 
                 # Sleep after page navigation
                 await asyncio.sleep(config.CRAWLER_MAX_SLEEP_SEC)
                 utils.logger.info(f"[KuaishouCrawler.search] Sleeping for {config.CRAWLER_MAX_SLEEP_SEC} seconds after page {page-1}")
 
                 await self.batch_get_video_comments(video_id_list)
+                if pcursor == "no_more":
+                    break
 
     async def get_specified_videos(self):
         """Get the information and comments of the specified post"""
@@ -280,7 +294,6 @@ class KuaishouCrawler(AbstractCrawler):
                     photo_id=video_id,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
                     callback=kuaishou_store.batch_update_ks_video_comments,
-                    max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
                 )
             except DataFetchError as ex:
                 utils.logger.error(

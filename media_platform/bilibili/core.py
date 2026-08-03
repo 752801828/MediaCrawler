@@ -187,14 +187,12 @@ class BilibiliCrawler(AbstractCrawler):
         """
         utils.logger.info("[BilibiliCrawler.search_by_keywords] Begin search bilibli keywords")
         bili_limit_count = 20  # bilibili limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < bili_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = bili_limit_count
         start_page = config.START_PAGE  # start page number
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Current search keyword: {keyword}")
             page = 1
-            while (page - start_page + 1) * bili_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            while True:
                 if page < start_page:
                     utils.logger.info(f"[BilibiliCrawler.search_by_keywords] Skip page: {page}")
                     page += 1
@@ -240,7 +238,7 @@ class BilibiliCrawler(AbstractCrawler):
     async def search_by_keywords_in_time_range(self, daily_limit: bool):
         """
         Search bilibili video with keywords in a given time range.
-        :param daily_limit: if True, strictly limit the number of notes per day and total.
+        :param daily_limit: Deprecated compatibility parameter; local count limits are no longer applied.
         """
         utils.logger.info(f"[BilibiliCrawler.search_by_keywords_in_time_range] Begin search with daily_limit={daily_limit}")
         bili_limit_count = 20
@@ -249,31 +247,11 @@ class BilibiliCrawler(AbstractCrawler):
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
             utils.logger.info(f"[BilibiliCrawler.search_by_keywords_in_time_range] Current search keyword: {keyword}")
-            total_notes_crawled_for_keyword = 0
-
             for day in pd.date_range(start=config.START_DAY, end=config.END_DAY, freq="D"):
-                if (daily_limit and total_notes_crawled_for_keyword >= config.CRAWLER_MAX_NOTES_COUNT):
-                    utils.logger.info(f"[BilibiliCrawler.search] Reached CRAWLER_MAX_NOTES_COUNT limit for keyword '{keyword}', skipping remaining days.")
-                    break
-
-                if (not daily_limit and total_notes_crawled_for_keyword >= config.CRAWLER_MAX_NOTES_COUNT):
-                    utils.logger.info(f"[BilibiliCrawler.search] Reached CRAWLER_MAX_NOTES_COUNT limit for keyword '{keyword}', skipping remaining days.")
-                    break
-
                 pubtime_begin_s, pubtime_end_s = await self.get_pubtime_datetime(start=day.strftime("%Y-%m-%d"), end=day.strftime("%Y-%m-%d"))
                 page = 1
-                notes_count_this_day = 0
 
                 while True:
-                    if notes_count_this_day >= config.MAX_NOTES_PER_DAY:
-                        utils.logger.info(f"[BilibiliCrawler.search] Reached MAX_NOTES_PER_DAY limit for {day.ctime()}.")
-                        break
-                    if (daily_limit and total_notes_crawled_for_keyword >= config.CRAWLER_MAX_NOTES_COUNT):
-                        utils.logger.info(f"[BilibiliCrawler.search] Reached CRAWLER_MAX_NOTES_COUNT limit for keyword '{keyword}'.")
-                        break
-                    if (not daily_limit and total_notes_crawled_for_keyword >= config.CRAWLER_MAX_NOTES_COUNT):
-                        break
-
                     try:
                         utils.logger.info(f"[BilibiliCrawler.search] search bilibili keyword: {keyword}, date: {day.ctime()}, page: {page}")
                         video_id_list: List[str] = []
@@ -297,14 +275,6 @@ class BilibiliCrawler(AbstractCrawler):
 
                         for video_item in video_items:
                             if video_item:
-                                if (daily_limit and total_notes_crawled_for_keyword >= config.CRAWLER_MAX_NOTES_COUNT):
-                                    break
-                                if (not daily_limit and total_notes_crawled_for_keyword >= config.CRAWLER_MAX_NOTES_COUNT):
-                                    break
-                                if notes_count_this_day >= config.MAX_NOTES_PER_DAY:
-                                    break
-                                notes_count_this_day += 1
-                                total_notes_crawled_for_keyword += 1
                                 video_id_list.append(video_item.get("View").get("aid"))
                                 await bilibili_store.update_bilibili_video(video_item)
                                 await bilibili_store.update_up_info(video_item)
@@ -355,9 +325,8 @@ class BilibiliCrawler(AbstractCrawler):
                 await self.bili_client.get_video_all_comments(
                     video_id=video_id,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
-                    is_fetch_sub_comments=config.ENABLE_GET_SUB_COMMENTS,
+                    is_fetch_sub_comments=config.is_get_sub_comments_enabled("bili"),
                     callback=bilibili_store.batch_update_bilibili_video_comments,
-                    max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
                 )
 
             except DataFetchError as ex:
@@ -646,14 +615,17 @@ class BilibiliCrawler(AbstractCrawler):
         """
         async with semaphore:
             creator_unhandled_info: Dict = await self.bili_client.get_creator_info(creator_id)
-            # 教学版：仅保留动态所需的最少字段(内存临时用)，不持久化创作者个人资料。
             creator_info: Dict = {
                 "id": creator_id,
                 "name": creator_unhandled_info.get("name"),
+                "sign": creator_unhandled_info.get("sign"),
+                "avatar": creator_unhandled_info.get("face"),
             }
-        # 教学版：不再爬取粉丝/关注列表(其他用户的个人信息)，防骚扰。
-        # await self.get_fans(creator_info, semaphore)
-        # await self.get_followings(creator_info, semaphore)
+            await bilibili_store.save_creator_profile(
+                str(creator_id), creator_unhandled_info
+            )
+        await self.get_fans(creator_info, semaphore)
+        await self.get_followings(creator_info, semaphore)
         await self.get_dynamics(creator_info, semaphore)
 
     async def get_fans(self, creator_info: Dict, semaphore: asyncio.Semaphore):
@@ -671,7 +643,6 @@ class BilibiliCrawler(AbstractCrawler):
                     creator_info=creator_info,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
                     callback=bilibili_store.batch_update_bilibili_creator_fans,
-                    max_count=config.CRAWLER_MAX_CONTACTS_COUNT_SINGLENOTES,
                 )
 
             except DataFetchError as ex:
@@ -694,7 +665,6 @@ class BilibiliCrawler(AbstractCrawler):
                     creator_info=creator_info,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
                     callback=bilibili_store.batch_update_bilibili_creator_followings,
-                    max_count=config.CRAWLER_MAX_CONTACTS_COUNT_SINGLENOTES,
                 )
 
             except DataFetchError as ex:
@@ -717,7 +687,6 @@ class BilibiliCrawler(AbstractCrawler):
                     creator_info=creator_info,
                     crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
                     callback=bilibili_store.batch_update_bilibili_creator_dynamics,
-                    max_count=config.CRAWLER_MAX_DYNAMICS_COUNT_SINGLENOTES,
                 )
 
             except DataFetchError as ex:

@@ -36,7 +36,8 @@ from sqlalchemy import select
 import config
 from base.base_crawler import AbstractStore
 from database.db_session import get_session
-from database.models import KuaishouVideo, KuaishouVideoComment
+from database.models import KuaishouCreator, KuaishouVideo, KuaishouVideoComment
+from store.creator_store import upsert_creator
 from tools import utils, words
 from var import crawler_type_var
 from database.mongodb_store_base import MongoDBStoreBase
@@ -85,12 +86,12 @@ class KuaishouCsvStoreImplement(AbstractStore):
         await self.writer.write_to_csv(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator: Dict):
-        pass
+        await self.writer.write_to_csv(item_type="creators", item=creator)
 
 
 class KuaishouDbStoreImplement(AbstractStore):
     async def store_creator(self, creator: Dict):
-        pass
+        await upsert_creator(KuaishouCreator, creator)
 
     async def store_content(self, content_item: Dict):
         """
@@ -164,7 +165,9 @@ class KuaishouJsonStoreImplement(AbstractStore):
         await self.writer.write_single_item_to_json(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator: Dict):
-        pass
+        await self.writer.write_single_item_to_json(
+            item_type="creators", item=creator
+        )
 
 
 class KuaishouJsonlStoreImplement(AbstractStore):
@@ -179,12 +182,11 @@ class KuaishouJsonlStoreImplement(AbstractStore):
         await self.writer.write_to_jsonl(item_type="comments", item=comment_item)
 
     async def store_creator(self, creator: Dict):
-        pass
+        await self.writer.write_to_jsonl(item_type="creators", item=creator)
 
 
 class KuaishouSqliteStoreImplement(KuaishouDbStoreImplement):
-    async def store_creator(self, creator: Dict):
-        pass
+    pass
 
 
 class KuaishouMongoStoreImplement(AbstractStore):
@@ -228,8 +230,14 @@ class KuaishouMongoStoreImplement(AbstractStore):
         utils.logger.info(f"[KuaishouMongoStoreImplement.store_comment] Saved comment {comment_id} to MongoDB")
 
     async def store_creator(self, creator_item: Dict):
-        # 教学版：创作者个人资料不再落库
-        pass
+        user_id = creator_item.get("user_id")
+        if not user_id:
+            return
+        await self.mongo_store.save_or_update(
+            collection_suffix="creators",
+            query={"user_id": user_id},
+            data=creator_item,
+        )
 
 
 class KuaishouExcelStoreImplement:

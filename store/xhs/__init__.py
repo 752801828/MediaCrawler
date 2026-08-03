@@ -21,11 +21,12 @@
 # @Author  : relakkes@gmail.com
 # @Time    : 2024/1/14 17:34
 # @Desc    :
+import json
 from typing import List
 
 import config
 from var import source_keyword_var
-from tools.user_hash import anonymize_user_id, mask_nickname
+from tools.user_hash import anonymize_user_id
 
 from .xhs_store_media import *
 from ._store_impl import *
@@ -114,8 +115,11 @@ async def update_xhs_note(note_item: Dict):
         "video_url": video_url,  # Note video url
         "time": note_item.get("time"),  # Note publish time
         "last_update_time": note_item.get("last_update_time", 0),  # Note last update time
-        "creator_hash": anonymize_user_id(user_info.get("user_id")),  # 创作者匿名哈希(不存原始 user_id)
-        "nickname": mask_nickname(user_info.get("nickname")),  # 用户昵称(已脱敏)
+        "user_id": user_info.get("user_id"),
+        "creator_hash": anonymize_user_id(user_info.get("user_id")),
+        "nickname": user_info.get("nickname"),
+        "avatar": user_info.get("avatar"),
+        "ip_location": note_item.get("ip_location", ""),
         "liked_count": interact_info.get("liked_count"),  # Like count
         "collected_count": interact_info.get("collected_count"),  # Collection count
         "comment_count": interact_info.get("comment_count"),  # Comment count
@@ -166,8 +170,11 @@ async def update_xhs_note_comment(note_id: str, comment_item: Dict):
         "create_time": comment_item.get("create_time"),  # Comment time
         "note_id": note_id,  # Note ID
         "content": comment_item.get("content"),  # Comment content
-        "creator_hash": anonymize_user_id(user_info.get("user_id")),  # 创作者匿名哈希(不存原始 user_id)
-        "nickname": mask_nickname(user_info.get("nickname")),  # 用户昵称(已脱敏)
+        "user_id": user_info.get("user_id"),
+        "creator_hash": anonymize_user_id(user_info.get("user_id")),
+        "nickname": user_info.get("nickname"),
+        "avatar": user_info.get("image") or user_info.get("avatar"),
+        "ip_location": comment_item.get("ip_location"),
         "sub_comment_count": comment_item.get("sub_comment_count", 0),  # Sub-comment count
         "pictures": ",".join(comment_pictures),  # Comment pictures
         "parent_comment_id": target_comment.get("id", ""),  # Parent comment ID
@@ -188,8 +195,35 @@ async def save_creator(user_id: str, creator: Dict):
     Returns:
 
     """
-    # 教学版：创作者个人资料(昵称/性别/头像/IP/粉丝数等)不再落库，防骚扰。
-    return
+    user_info = creator.get("basicInfo") or {}
+    metrics = {"follows": 0, "fans": 0, "interaction": 0}
+    for item in creator.get("interactions") or []:
+        metric_type = item.get("type")
+        if metric_type in metrics:
+            metrics[metric_type] = item.get("count", 0)
+    gender_map = {0: "男", 1: "女"}
+    images = user_info.get("images")
+    if isinstance(images, (dict, list)):
+        images = json.dumps(images, ensure_ascii=False)
+    tags = {
+        tag.get("tagType"): tag.get("name")
+        for tag in creator.get("tags") or []
+        if tag.get("tagType")
+    }
+    local_db_item = {
+        "user_id": user_id,
+        "nickname": user_info.get("nickname"),
+        "gender": gender_map.get(user_info.get("gender")),
+        "avatar": images,
+        "desc": user_info.get("desc"),
+        "ip_location": user_info.get("ipLocation"),
+        "follows": str(metrics["follows"]),
+        "fans": str(metrics["fans"]),
+        "interaction": str(metrics["interaction"]),
+        "tag_list": json.dumps(tags, ensure_ascii=False),
+        "last_modify_ts": utils.get_current_timestamp(),
+    }
+    await XhsStoreFactory.create_store().store_creator(local_db_item)
 
 
 async def update_xhs_note_image(note_id, pic_content, extension_file_name):

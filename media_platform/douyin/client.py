@@ -41,6 +41,7 @@ from .help import *
 
 
 class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
+    REQUEST_MAX_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -124,8 +125,37 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         # Check whether the proxy has expired before each request
         await self._refresh_proxy_if_expired()
 
-        async with make_async_client(proxy=self.proxy) as client:
-            response = await client.request(method, url, timeout=self.timeout, **kwargs)
+        response = None
+        for attempt in range(self.REQUEST_MAX_ATTEMPTS):
+            try:
+                async with make_async_client(proxy=self.proxy) as client:
+                    response = await client.request(
+                        method,
+                        url,
+                        timeout=self.timeout,
+                        **kwargs,
+                    )
+            except httpx.RequestError as exc:
+                if attempt + 1 == self.REQUEST_MAX_ATTEMPTS:
+                    raise DataFetchError(
+                        "Douyin request failed after "
+                        f"{self.REQUEST_MAX_ATTEMPTS} attempts "
+                        f"({type(exc).__name__})"
+                    ) from exc
+                delay = float(2**attempt)
+                utils.logger.warning(
+                    "[DouYinClient.request] Transient request failure "
+                    "%s/%s (%s); retrying in %.0fs",
+                    attempt + 1,
+                    self.REQUEST_MAX_ATTEMPTS,
+                    type(exc).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            break
+        if response is None:
+            raise DataFetchError("Douyin request returned no response")
         try:
             if response.text == "" or response.text == "blocked":
                 utils.logger.error(f"request params incrr, response.text: {response.text}")
@@ -148,15 +178,15 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         return await self.request(method="POST", url=f"{self._host}{uri}", data=data, headers=headers)
 
     async def pong(self, browser_context: BrowserContext) -> bool:
-        local_storage = await self.playwright_page.evaluate("() => window.localStorage")
-        if local_storage.get("HasUserLogin", "") == "1":
-            return True
-
         _, cookie_dict = await utils.convert_browser_context_cookies(
             browser_context,
             urls=self.cookie_urls,
         )
-        return cookie_dict.get("LOGIN_STATUS") == "1"
+        return (
+            cookie_dict.get("LOGIN_STATUS") == "1"
+            or bool(cookie_dict.get("sessionid"))
+            or bool(cookie_dict.get("sessionid_ss"))
+        )
 
     async def update_cookies(self, browser_context: BrowserContext, urls: Optional[list[str]] = None):
         cookie_str, cookie_dict = await utils.convert_browser_context_cookies(
@@ -250,13 +280,95 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         headers["Referer"] = urllib.parse.quote(referer_url, safe=':/')
         return await self.get(uri, params)
 
+    async def get_tag_aweme_page(
+        self,
+        *,
+        tag_id: str,
+        tag_url: str,
+        cursor: int = 0,
+        count: int = 12,
+    ) -> Dict:
+        uri = "/aweme/v1/web/challenge/aweme/"
+        params = {
+            "ch_id": tag_id,
+            "query_type": 0,
+            "sort_type": 0,
+            "offset": cursor,
+            "cursor": cursor,
+            "count": count,
+            "support_h265": 1,
+            "support_dash": 0,
+        }
+        headers = copy.copy(self.headers)
+        headers["Host"] = "www-hj.douyin.com"
+        headers["Origin"] = "https://www.douyin.com/"
+        headers["Referer"] = tag_url
+        await self.__process_req_params(uri, params, headers)
+        return await self.request(
+            method="GET",
+            url=f"https://www-hj.douyin.com{uri}",
+            params=params,
+            headers=headers,
+        )
+
+    async def get_tag_all_awemes(
+        self,
+        *,
+        tag_id: str,
+        tag_url: str,
+        crawl_interval: float = 1.0,
+        callback: Optional[Callable] = None,
+        collect_result: bool = True,
+    ) -> list[tuple[int, Dict]]:
+        cursor = 0
+        seen_cursors: set[int] = set()
+        result: list[tuple[int, Dict]] = []
+        total_count = 0
+        while True:
+            if cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[DouYinClient.get_tag_all_awemes] Repeated cursor {cursor} "
+                    f"for tag_id={tag_id}; stop pagination"
+                )
+                break
+            seen_cursors.add(cursor)
+            requested_cursor = cursor
+            response = await self.get_tag_aweme_page(
+                tag_id=tag_id,
+                tag_url=tag_url,
+                cursor=requested_cursor,
+            )
+            status_code = int(response.get("status_code") or 0)
+            if status_code != 0:
+                raise DataFetchError(
+                    f"douyin tag API failed with status_code={status_code}"
+                )
+            aweme_list = response.get("aweme_list") or []
+            utils.logger.info(
+                f"[DouYinClient.get_tag_all_awemes] tag_id={tag_id}, "
+                f"cursor={requested_cursor}, awemes={len(aweme_list)}, "
+                f"total={total_count + len(aweme_list)}"
+            )
+            if not aweme_list:
+                break
+            total_count += len(aweme_list)
+            if collect_result:
+                result.extend((requested_cursor, item) for item in aweme_list)
+            if callback:
+                await callback(tag_id, requested_cursor, aweme_list)
+            if not response.get("has_more"):
+                break
+            cursor = int(response.get("cursor") or 0)
+            await asyncio.sleep(crawl_interval)
+        return result
+
     async def get_aweme_all_comments(
         self,
         aweme_id: str,
         crawl_interval: float = 1.0,
         is_fetch_sub_comments=False,
         callback: Optional[Callable] = None,
-        max_count: int = 10,
+        max_count: Optional[int] = None,
     ):
         """
         获取帖子的所有评论，包括子评论
@@ -264,21 +376,26 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         :param crawl_interval: 抓取间隔
         :param is_fetch_sub_comments: 是否抓取子评论
         :param callback: 回调函数，用于处理抓取到的评论
-        :param max_count: 一次帖子爬取的最大评论数量
+        :param max_count: 已弃用，保留仅用于调用兼容；一级评论始终抓取到平台返回结束
         :return: 评论列表
         """
         result = []
         comments_has_more = 1
         comments_cursor = 0
-        while comments_has_more and len(result) < max_count:
+        seen_cursors = set()
+        while comments_has_more:
+            if comments_cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[DouYinClient.get_aweme_all_comments] Repeated cursor {comments_cursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(comments_cursor)
             comments_res = await self.get_aweme_comments(aweme_id, comments_cursor)
             comments_has_more = comments_res.get("has_more", 0)
             comments_cursor = comments_res.get("cursor", 0)
             comments = comments_res.get("comments", [])
             if not comments:
-                continue
-            if len(result) + len(comments) > max_count:
-                comments = comments[:max_count - len(result)]
+                break
             result.extend(comments)
             if callback:  # If there is a callback function, execute the callback function
                 await callback(aweme_id, comments)
@@ -288,21 +405,37 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
                 continue
             # Get secondary reviews
             for comment in comments:
-                reply_comment_total = comment.get("reply_comment_total")
+                reply_comment_total = comment.get("reply_comment_total") or 0
 
                 if reply_comment_total > 0:
                     comment_id = comment.get("cid")
                     sub_comments_has_more = 1
                     sub_comments_cursor = 0
+                    seen_sub_comment_cursors = set()
 
                     while sub_comments_has_more:
-                        sub_comments_res = await self.get_sub_comments(aweme_id, comment_id, sub_comments_cursor)
+                        if sub_comments_cursor in seen_sub_comment_cursors:
+                            utils.logger.warning(
+                                f"[DouYinClient.get_aweme_all_comments] Repeated sub-comment cursor "
+                                f"{sub_comments_cursor} for aweme_id={aweme_id}, "
+                                f"root_comment_id={comment_id}; stop pagination"
+                            )
+                            break
+                        seen_sub_comment_cursors.add(sub_comments_cursor)
+                        requested_cursor = sub_comments_cursor
+                        sub_comments_res = await self.get_sub_comments(
+                            aweme_id, comment_id, requested_cursor
+                        )
                         sub_comments_has_more = sub_comments_res.get("has_more", 0)
                         sub_comments_cursor = sub_comments_res.get("cursor", 0)
-                        sub_comments = sub_comments_res.get("comments", [])
-
+                        sub_comments = sub_comments_res.get("comments") or []
+                        utils.logger.info(
+                            f"[DouYinClient.get_aweme_all_comments] aweme_id={aweme_id}, "
+                            f"root_comment_id={comment_id}, cursor={requested_cursor}, "
+                            f"sub_comments={len(sub_comments)}"
+                        )
                         if not sub_comments:
-                            continue
+                            break
                         result.extend(sub_comments)
                         if callback:  # If there is a callback function, execute the callback function
                             await callback(aweme_id, sub_comments)
@@ -333,11 +466,20 @@ class DouYinClient(AbstractApiClient, ProxyRefreshMixin):
         posts_has_more = 1
         max_cursor = ""
         result = []
+        seen_cursors = set()
         while posts_has_more == 1:
+            if max_cursor in seen_cursors:
+                utils.logger.warning(
+                    f"[DouYinClient.get_all_user_aweme_posts] Repeated cursor {max_cursor}, stop pagination"
+                )
+                break
+            seen_cursors.add(max_cursor)
             aweme_post_res = await self.get_user_aweme_posts(sec_user_id, max_cursor)
             posts_has_more = aweme_post_res.get("has_more", 0)
             max_cursor = aweme_post_res.get("max_cursor")
             aweme_list = aweme_post_res.get("aweme_list") if aweme_post_res.get("aweme_list") else []
+            if not aweme_list:
+                break
             utils.logger.info(f"[DouYinClient.get_all_user_aweme_posts] get sec_user_id:{sec_user_id} video len : {len(aweme_list)}")
             if callback:
                 await callback(aweme_list)

@@ -40,6 +40,7 @@ from tools.cdp_browser import CDPBrowserManager
 from var import crawler_type_var, source_keyword_var
 
 from .client import DouYinClient
+from .comment_api import WaterAccountCommentApiFetcher
 from .exception import DataFetchError
 from .field import PublishTimeType
 from .help import parse_video_info_from_url, parse_creator_info_from_url
@@ -121,14 +122,47 @@ class DouYinCrawler(AbstractCrawler):
             elif config.CRAWLER_TYPE == "creator":
                 # Get the information and comments of the specified creator
                 await self.get_creators_and_videos()
+            elif config.CRAWLER_TYPE == "tag":
+                await self.get_tag_awemes()
 
             utils.logger.info("[DouYinCrawler.start] Douyin Crawler finished ...")
+
+    async def get_tag_awemes(self) -> None:
+        targets = getattr(self, "tag_targets", ())
+        callback = getattr(self, "tag_page_callback", None)
+        if not targets or callback is None:
+            raise ValueError("douyin tag task is missing targets or storage callback")
+        for target in targets:
+            utils.logger.info(
+                f"[DouYinCrawler.get_tag_awemes] Begin tag_id={target.tag_id}, "
+                f"tag_name={target.tag_name}"
+            )
+            await self.context_page.goto(
+                target.tag_url,
+                wait_until="domcontentloaded",
+            )
+
+            async def save_page(_tag_id, cursor, aweme_list, *, current=target):
+                await callback(current, cursor, aweme_list)
+
+            await self.dy_client.get_tag_all_awemes(
+                tag_id=target.tag_id,
+                tag_url=target.tag_url,
+                crawl_interval=config.CRAWLER_MAX_SLEEP_SEC,
+                callback=save_page,
+                collect_result=False,
+            )
+        complete_callback = getattr(
+            self,
+            "tag_complete_callback",
+            None,
+        )
+        if complete_callback is not None:
+            await complete_callback()
 
     async def search(self) -> None:
         utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")
         dy_limit_count = 10  # douyin limit page fixed value
-        if config.CRAWLER_MAX_NOTES_COUNT < dy_limit_count:
-            config.CRAWLER_MAX_NOTES_COUNT = dy_limit_count
         start_page = config.START_PAGE  # start page number
         for keyword in config.KEYWORDS.split(","):
             source_keyword_var.set(keyword)
@@ -136,7 +170,8 @@ class DouYinCrawler(AbstractCrawler):
             aweme_list: List[str] = []
             page = 0
             dy_search_id = ""
-            while (page - start_page + 1) * dy_limit_count <= config.CRAWLER_MAX_NOTES_COUNT:
+            seen_page_ids = set()
+            while True:
                 if page < start_page:
                     utils.logger.info(f"[DouYinCrawler.search] Skip {page}")
                     page += 1
@@ -171,6 +206,13 @@ class DouYinCrawler(AbstractCrawler):
                     page_aweme_list.append(aweme_info.get("aweme_id", ""))
                     await douyin_store.update_douyin_aweme(aweme_item=aweme_info)
                     await self.get_aweme_media(aweme_item=aweme_info)
+                page_key = tuple(page_aweme_list)
+                if not page_key or page_key in seen_page_ids:
+                    utils.logger.info(
+                        f"[DouYinCrawler.search] Empty or repeated result page for keyword {keyword}, stop pagination"
+                    )
+                    break
+                seen_page_ids.add(page_key)
                 
                 # Batch get note comments for the current page
                 await self.batch_get_note_comments(page_aweme_list)
@@ -239,15 +281,92 @@ class DouYinCrawler(AbstractCrawler):
             utils.logger.info(f"[DouYinCrawler.batch_get_note_comments] Crawling comment mode is not enabled")
             return
 
+        fetch_mode = getattr(
+            config,
+            "DOUYIN_COMMENT_FETCH_MODE",
+            "legacy",
+        )
+        if fetch_mode == "water_api":
+            await self.batch_get_note_comments_api_first(aweme_list)
+            return
+        await self.batch_get_note_comments_legacy(aweme_list)
+
+    async def batch_get_note_comments_api_first(
+        self,
+        aweme_list: List[str],
+    ) -> None:
+        """Fetch comments through water-account APIs, with per-aweme fallback."""
+        fetcher = WaterAccountCommentApiFetcher(
+            client=self.dy_client,
+            browser_context=self.browser_context,
+            page=self.context_page,
+            callback=douyin_store.batch_update_dy_aweme_comments,
+            crawl_interval=config.DOUYIN_WATER_API_CRAWL_INTERVAL_SEC,
+            fetch_sub_comments=config.is_get_sub_comments_enabled("dy"),
+        )
+        fallback_semaphore = asyncio.Semaphore(1)
+        failed_aweme_ids: List[str] = []
+        for aweme_id in aweme_list:
+            utils.logger.info(
+                "[DouYinCrawler.batch_get_note_comments_api_first] "
+                "channel=water-api aweme_id=%s begin",
+                aweme_id,
+            )
+            try:
+                await fetcher.fetch(str(aweme_id))
+            except Exception as exc:
+                utils.logger.warning(
+                    "[DouYinCrawler.batch_get_note_comments_api_first] "
+                    "aweme_id=%s channel=water-api failed=%s; "
+                    "fallback=legacy",
+                    aweme_id,
+                    type(exc).__name__,
+                )
+                try:
+                    await self.get_comments(
+                        str(aweme_id),
+                        fallback_semaphore,
+                        raise_on_error=True,
+                    )
+                except Exception as legacy_exc:
+                    failed_aweme_ids.append(str(aweme_id))
+                    utils.logger.error(
+                        "[DouYinCrawler.batch_get_note_comments_api_first] "
+                        "aweme_id=%s channel=legacy failed=%s",
+                        aweme_id,
+                        type(legacy_exc).__name__,
+                    )
+        if failed_aweme_ids:
+            raise DataFetchError(
+                "water-api and legacy comment collection both failed "
+                f"for aweme_ids={','.join(failed_aweme_ids)}"
+            )
+
+    async def batch_get_note_comments_legacy(
+        self,
+        aweme_list: List[str],
+    ) -> None:
+        """Run the original project comment collection path."""
         task_list: List[Task] = []
         semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         for aweme_id in aweme_list:
+            utils.logger.info(
+                "[DouYinCrawler.batch_get_note_comments_legacy] "
+                "channel=legacy aweme_id=%s begin",
+                aweme_id,
+            )
             task = asyncio.create_task(self.get_comments(aweme_id, semaphore), name=aweme_id)
             task_list.append(task)
         if len(task_list) > 0:
-            await asyncio.wait(task_list)
+            await asyncio.gather(*task_list)
 
-    async def get_comments(self, aweme_id: str, semaphore: asyncio.Semaphore) -> None:
+    async def get_comments(
+        self,
+        aweme_id: str,
+        semaphore: asyncio.Semaphore,
+        *,
+        raise_on_error: bool = False,
+    ) -> None:
         async with semaphore:
             try:
                 # Pass the list of keywords to the get_aweme_all_comments method
@@ -256,9 +375,8 @@ class DouYinCrawler(AbstractCrawler):
                 await self.dy_client.get_aweme_all_comments(
                     aweme_id=aweme_id,
                     crawl_interval=crawl_interval,
-                    is_fetch_sub_comments=config.ENABLE_GET_SUB_COMMENTS,
+                    is_fetch_sub_comments=config.is_get_sub_comments_enabled("dy"),
                     callback=douyin_store.batch_update_dy_aweme_comments,
-                    max_count=config.CRAWLER_MAX_COMMENTS_COUNT_SINGLENOTES,
                 )
                 # Sleep after fetching comments
                 await asyncio.sleep(crawl_interval)
@@ -266,6 +384,8 @@ class DouYinCrawler(AbstractCrawler):
                 utils.logger.info(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} comments have all been obtained and filtered ...")
             except DataFetchError as e:
                 utils.logger.error(f"[DouYinCrawler.get_comments] aweme_id: {aweme_id} get comments failed, error: {e}")
+                if raise_on_error:
+                    raise
 
     async def get_creators_and_videos(self) -> None:
         """
