@@ -10,7 +10,14 @@ import pytest_asyncio
 from sqlalchemy import UniqueConstraint, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from creator_ops.domain import MetricRecord, Platform
+from creator_ops.domain import (
+    AccountProfile,
+    DataChangeCount,
+    MetricRecord,
+    Platform,
+    Task,
+    TaskKind,
+)
 from creator_ops.storage.models import (
     CreatorContentMetricSnapshot,
     CreatorOpsSyncOutbox,
@@ -86,6 +93,65 @@ async def test_upsert_content_snapshot_updates_same_daily_key(repository):
     assert count == 1
     assert row.content_url == "https://www.xiaohongshu.com/explore/note-1-updated"
     assert json.loads(row.metrics_json) == {"浏览": 20}
+
+
+@pytest.mark.asyncio
+async def test_task_change_counts_splits_created_and_updated_metrics(repository):
+    repo, session_maker = repository
+    start = datetime(2026, 8, 3, 2, 0)
+    end = datetime(2026, 8, 3, 2, 10)
+    async with session_maker() as session:
+        session.add_all(
+            [
+                CreatorContentMetricSnapshot(
+                    platform="xhs",
+                    profile_key="%s_use_data_dir",
+                    content_key="new-note",
+                    title="New",
+                    snapshot_date=date(2026, 8, 3),
+                    metrics_json="{}",
+                    created_at=datetime(2026, 8, 3, 2, 1),
+                    updated_at=datetime(2026, 8, 3, 2, 1),
+                ),
+                CreatorContentMetricSnapshot(
+                    platform="xhs",
+                    profile_key="%s_use_data_dir",
+                    content_key="updated-note",
+                    title="Updated",
+                    snapshot_date=date(2026, 8, 3),
+                    metrics_json="{}",
+                    created_at=datetime(2026, 8, 2, 2, 1),
+                    updated_at=datetime(2026, 8, 3, 2, 2),
+                ),
+                CreatorContentMetricSnapshot(
+                    platform="dy",
+                    profile_key="%s_use_data_dir",
+                    content_key="other-platform",
+                    title="Other",
+                    snapshot_date=date(2026, 8, 3),
+                    metrics_json="{}",
+                    created_at=datetime(2026, 8, 3, 2, 1),
+                    updated_at=datetime(2026, 8, 3, 2, 1),
+                ),
+            ]
+        )
+        await session.commit()
+    task = Task(
+        task_id="creator-metrics:xhs:%s_use_data_dir",
+        platform=Platform.XHS,
+        kind=TaskKind.CREATOR_METRICS,
+        profile=AccountProfile(
+            platform=Platform.XHS,
+            template="%s_use_data_dir",
+            path=Path("xhs_use_data_dir"),
+            is_main=True,
+            is_water=False,
+        ),
+    )
+
+    changes = await repo.task_change_counts(task, start, end)
+
+    assert changes == (DataChangeCount("作品指标", created=1, updated=1),)
 
 
 @pytest.mark.asyncio

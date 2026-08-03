@@ -47,7 +47,12 @@ def metric_feishu_payload(record: MetricRecord) -> dict[str, Any]:
             target_key = DOUYIN_FEISHU_METRIC_FIELDS.get(key, key)
             payload[target_key] = _douyin_metric_text(key, value)
     else:
-        payload.update(record.metrics)
+        payload.update(
+            {
+                key: "" if value is None else str(value)
+                for key, value in record.metrics.items()
+            }
+        )
     return payload
 
 
@@ -102,7 +107,10 @@ class OutboxSynchronizer:
                         self.client.batch_create_records,
                         self.settings.feishu.app_token,
                         table_id,
-                        [json.loads(row.payload_json) for row in create_rows],
+                        [
+                            _sync_payload(target, json.loads(row.payload_json))
+                            for row in create_rows
+                        ],
                     )
                     record_ids = _created_record_ids(responses)
                     if len(record_ids) != len(create_rows):
@@ -135,7 +143,7 @@ class OutboxSynchronizer:
                         [
                             (
                                 str(row.remote_record_id),
-                                json.loads(row.payload_json),
+                                _sync_payload(target, json.loads(row.payload_json)),
                             )
                             for row in update_rows
                         ],
@@ -350,6 +358,15 @@ def _comment_feishu_payload(
     cleaned["last_modify_ts"] = _format_timestamp(cleaned.get("last_modify_ts"))
     cleaned["create_time"] = _format_timestamp(cleaned.get("create_time"))
     return cleaned
+
+
+def _sync_payload(target: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if target != "xhs_stats":
+        return payload
+    return {
+        key: "" if value is None else str(value)
+        for key, value in payload.items()
+    }
 
 
 def _douyin_comment_identity(

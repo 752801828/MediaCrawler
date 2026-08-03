@@ -6,10 +6,10 @@ from contextlib import AbstractAsyncContextManager
 from datetime import date, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from creator_ops.domain import MetricRecord, Task
+from creator_ops.domain import DataChangeCount, MetricRecord, Platform, Task, TaskKind
 from database.db_session import get_session
 
 from .models import (
@@ -205,6 +205,169 @@ class CreatorOpsRepository:
                 .limit(limit)
             )
             return list(rows)
+
+    async def task_change_counts(
+        self,
+        task: Task,
+        started_at: datetime,
+        finished_at: datetime,
+    ) -> tuple[DataChangeCount, ...]:
+        from database.models import (
+            DouyinAweme,
+            DouyinAwemeComment,
+            DouyinTagAwemeComment,
+            DyCreator,
+            XhsNote,
+            XhsNoteComment,
+            XhsCreator,
+        )
+
+        from .models import DouyinTagAweme
+
+        start_ms = int(started_at.timestamp() * 1000)
+        finish_ms = int(finished_at.timestamp() * 1000)
+        definitions: list[tuple[Any, str, Any, Any, tuple[Any, ...]]] = []
+
+        if task.kind is TaskKind.CREATOR_METRICS:
+            definitions.append(
+                (
+                    CreatorContentMetricSnapshot,
+                    "作品指标",
+                    CreatorContentMetricSnapshot.created_at,
+                    CreatorContentMetricSnapshot.updated_at,
+                    (
+                        CreatorContentMetricSnapshot.platform == task.platform.value,
+                        CreatorContentMetricSnapshot.profile_key == task.profile.template,
+                    ),
+                )
+            )
+        elif task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+            tag_ids = tuple(target.tag_id for target in task.tag_targets)
+            definitions.extend(
+                (
+                    (
+                        DouyinTagAweme,
+                        "Tag作品",
+                        DouyinTagAweme.created_at,
+                        DouyinTagAweme.updated_at,
+                        (DouyinTagAweme.tag_id.in_(tag_ids),),
+                    ),
+                    (
+                        DouyinTagAwemeComment,
+                        "Tag评论",
+                        DouyinTagAwemeComment.add_ts,
+                        DouyinTagAwemeComment.last_modify_ts,
+                        (DouyinTagAwemeComment.aweme_id.is_not(None),),
+                    ),
+                )
+            )
+        elif task.kind is TaskKind.DOUYIN_STATS_COMMENTS:
+            aweme_ids = tuple(task.targets)
+            definitions.extend(
+                (
+                    (
+                        DouyinAweme,
+                        "作品",
+                        DouyinAweme.add_ts,
+                        DouyinAweme.last_modify_ts,
+                        (DouyinAweme.aweme_id.in_(aweme_ids),),
+                    ),
+                    (
+                        DouyinAwemeComment,
+                        "评论",
+                        DouyinAwemeComment.add_ts,
+                        DouyinAwemeComment.last_modify_ts,
+                        (DouyinAwemeComment.aweme_id.in_(aweme_ids),),
+                    ),
+                )
+            )
+        elif task.kind is TaskKind.CONTENT_DETAIL:
+            if task.platform is Platform.XHS:
+                definitions.extend(
+                    (
+                        (
+                            XhsNote,
+                            "作品",
+                            XhsNote.add_ts,
+                            XhsNote.last_modify_ts,
+                            (XhsNote.note_id.in_(tuple(task.targets)),),
+                        ),
+                        (
+                            XhsNoteComment,
+                            "评论",
+                            XhsNoteComment.add_ts,
+                            XhsNoteComment.last_modify_ts,
+                            (XhsNoteComment.note_id.in_(tuple(task.targets)),),
+                        ),
+                    )
+                )
+            else:
+                definitions.extend(
+                    (
+                        (
+                            DouyinAweme,
+                            "作品",
+                            DouyinAweme.add_ts,
+                            DouyinAweme.last_modify_ts,
+                            (DouyinAweme.aweme_id.in_(tuple(task.targets)),),
+                        ),
+                        (
+                            DouyinAwemeComment,
+                            "评论",
+                            DouyinAwemeComment.add_ts,
+                            DouyinAwemeComment.last_modify_ts,
+                            (DouyinAwemeComment.aweme_id.in_(tuple(task.targets)),),
+                        ),
+                    )
+                )
+        elif task.kind is TaskKind.CREATOR_CONTENT:
+            if task.platform is Platform.XHS:
+                definitions.extend(
+                    (
+                        (XhsCreator, "创作者", XhsCreator.add_ts, XhsCreator.last_modify_ts, (XhsCreator.user_id.in_(tuple(task.targets)),)),
+                        (XhsNote, "作品", XhsNote.add_ts, XhsNote.last_modify_ts, (XhsNote.user_id.in_(tuple(task.targets)),)),
+                    )
+                )
+            else:
+                definitions.extend(
+                    (
+                        (DyCreator, "创作者", DyCreator.add_ts, DyCreator.last_modify_ts, (DyCreator.user_id.in_(tuple(task.targets)),)),
+                        (DouyinAweme, "作品", DouyinAweme.add_ts, DouyinAweme.last_modify_ts, (DouyinAweme.user_id.in_(tuple(task.targets)),)),
+                    )
+                )
+
+        changes: list[DataChangeCount] = []
+        async with self.session_factory() as session:
+            for model, label, created_column, updated_column, filters in definitions:
+                is_datetime = created_column.type.python_type is datetime
+                lower = started_at if is_datetime else start_ms
+                upper = finished_at if is_datetime else finish_ms
+                created_filter = and_(
+                    *filters,
+                    created_column >= lower,
+                    created_column <= upper,
+                )
+                updated_filter = and_(
+                    *filters,
+                    updated_column >= lower,
+                    updated_column <= upper,
+                    or_(created_column < lower, created_column.is_(None)),
+                )
+                created = int(
+                    await session.scalar(
+                        select(func.count()).select_from(model).where(created_filter)
+                    )
+                    or 0
+                )
+                updated = int(
+                    await session.scalar(
+                        select(func.count()).select_from(model).where(updated_filter)
+                    )
+                    or 0
+                )
+                if created or updated:
+                    changes.append(DataChangeCount(label, created, updated))
+        return tuple(changes)
 
     async def mark_sync_succeeded(
         self,

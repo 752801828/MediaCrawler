@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from creator_ops.config import FeishuSettings, MysqlSettings, Settings
-from creator_ops.domain import MetricRecord, Platform, TaskKind
+from creator_ops.domain import DataChangeCount, MetricRecord, Platform, TaskKind
 from creator_ops.feishu.client import FeishuError
 from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
 from creator_ops.sync import (
@@ -394,6 +394,24 @@ def test_metric_feishu_payload_includes_content_url():
     assert "完播率" not in payload
 
 
+def test_metric_feishu_payload_converts_xhs_metrics_to_text():
+    record = MetricRecord(
+        platform=Platform.XHS,
+        profile_key="%s_use_data_dir",
+        content_key="note-1",
+        title="Title",
+        published_at=datetime(2026, 7, 21, 10, 0),
+        snapshot_date=date(2026, 7, 21),
+        metrics={"曝光": 123, "封面点击率": 2.5, "人均观看时长": "8.3"},
+    )
+
+    payload = metric_feishu_payload(record)
+
+    assert payload["曝光"] == "123"
+    assert payload["封面点击率"] == "2.5"
+    assert payload["人均观看时长"] == "8.3"
+
+
 @pytest.mark.asyncio
 async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
     rows = [
@@ -453,6 +471,49 @@ async def test_outbox_synchronizer_marks_batch_success(tmp_path: Path):
     assert repo.requested_limit is None
     assert repo.synced == [(1, "rec-1"), (2, "rec-2")]
     assert client.calls[0][1] == "xhs-stats"
+
+
+@pytest.mark.asyncio
+async def test_outbox_synchronizer_normalizes_legacy_xhs_metric_types(
+    tmp_path: Path,
+):
+    rows = [
+        SimpleNamespace(
+            id=1,
+            target_table="xhs_stats",
+            payload_json=json.dumps(
+                {"标题": "A", "曝光": 123, "封面点击率": 2.5},
+                ensure_ascii=False,
+            ),
+            remote_record_id="",
+        )
+    ]
+
+    class Repo:
+        async def pending_sync(self, limit=None):
+            return rows
+
+        async def mark_sync_succeeded(self, row_id, remote_record_id=""):
+            return None
+
+        async def mark_sync_failed(self, row_id, error):
+            raise AssertionError(error)
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def batch_create_records(self, app_token, table_id, fields):
+            self.calls.append(fields)
+            return [{"data": {"records": [{"record_id": "rec-1"}]}}]
+
+    client = Client()
+    summary = await OutboxSynchronizer(
+        settings_for(tmp_path), client, Repo()
+    ).deliver_pending()
+
+    assert summary == SyncSummary(attempted=1, succeeded=1, failed=0)
+    assert client.calls[0] == [{"标题": "A", "曝光": "123", "封面点击率": "2.5"}]
 
 
 @pytest.mark.asyncio
@@ -586,6 +647,79 @@ async def test_runner_continues_after_one_creator_task_fails(tmp_path: Path):
     assert "task:xhs" in events
     assert "task:dy" in events
     assert events.index("read:account") < events.index("db")
+
+
+@pytest.mark.asyncio
+async def test_runner_reports_each_platform_after_its_last_task(tmp_path: Path):
+    settings = settings_for(tmp_path)
+    accounts = [
+        {"fields": {"ID": "%s_use_data_dir", "平台": "小红书", "主账号": True}},
+        {"fields": {"ID": "%s_use_data_dir", "平台": "抖音", "主账号": True}},
+    ]
+    reports = []
+
+    class Client:
+        def iter_records(self, _app, table, _view):
+            return accounts if table == "account" else []
+
+        def query_records(self, *_args, **_kwargs):
+            return []
+
+    class Repo:
+        async def create_run(self, _uuid):
+            return 1
+
+        async def start_task(self, _run_id, _task):
+            return 1
+
+        async def finish_task(self, _task_id, *, success, error=""):
+            return None
+
+        async def save_content_with_outbox(self, *args, **kwargs):
+            return 1, 1
+
+        async def task_change_counts(self, task, _started_at, _finished_at):
+            return (DataChangeCount(f"{task.platform.value} 数据", created=1, updated=2),)
+
+        async def finish_run(self, *args, **kwargs):
+            return None
+
+    class Collector:
+        async def collect(self, profile, **_kwargs):
+            return [
+                MetricRecord(
+                    platform=profile.platform,
+                    profile_key=profile.template,
+                    content_key="content-1",
+                    title="Content",
+                    published_at=None,
+                    snapshot_date=date(2026, 8, 3),
+                )
+            ]
+
+    class Syncer:
+        async def deliver_pending(self):
+            return SyncSummary(attempted=0, succeeded=0, failed=0)
+
+    async def init_db(_db_type):
+        return None
+
+    runner = CreatorOpsRunner(
+        settings,
+        client=Client(),
+        repository=Repo(),
+        collectors={Platform.XHS: Collector(), Platform.DOUYIN: Collector()},
+        synchronizer=Syncer(),
+        init_db=init_db,
+        platform_reporter=reports.append,
+    )
+
+    await runner.run()
+
+    assert [report.platform for report in reports] == [Platform.XHS, Platform.DOUYIN]
+    assert reports[0].tasks[0].changes == (
+        DataChangeCount("xhs 数据", created=1, updated=2),
+    )
 
 
 @pytest.mark.asyncio

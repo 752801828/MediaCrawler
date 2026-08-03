@@ -16,6 +16,7 @@ from creator_ops.runner import CreatorOpsRunner, WorkflowSummary
 from creator_ops.scheduled import (
     NotificationConfigError,
     load_notifier,
+    notify_platform_report,
     run_and_notify,
 )
 
@@ -58,7 +59,16 @@ def scheduled_run() -> None:
         raise typer.Exit(2) from exc
     try:
         summary = asyncio.run(
-            run_and_notify(CreatorOpsRunner(settings), notifier)
+            run_and_notify(
+                CreatorOpsRunner(
+                    settings,
+                    platform_reporter=lambda report: notify_platform_report(
+                        notifier,
+                        report,
+                    ),
+                ),
+                notifier,
+            )
         )
     except Exception as exc:
         typer.echo(

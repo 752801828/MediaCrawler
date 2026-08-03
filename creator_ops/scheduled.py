@@ -12,6 +12,12 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
+from creator_ops.domain import (
+    Platform,
+    PlatformExecutionReport,
+    Task,
+    TaskKind,
+)
 from creator_ops.runner import WorkflowSummary
 
 
@@ -28,9 +34,7 @@ def make_signature(timestamp: int, secret: str) -> str:
     return base64.b64encode(digest).decode()
 
 
-def build_text_payload(text: str, *, mention_all: bool = False) -> dict[str, Any]:
-    if mention_all:
-        text = f'<at user_id="all">所有人</at>\n{text}'
+def build_text_payload(text: str) -> dict[str, Any]:
     return {"msg_type": "text", "content": {"text": text}}
 
 
@@ -48,9 +52,9 @@ class FeishuBotNotifier:
         self.post = post
         self.clock = clock
 
-    def send(self, text: str, *, mention_all: bool = False) -> None:
+    def send(self, text: str) -> None:
         timestamp = int(self.clock())
-        payload = build_text_payload(text, mention_all=mention_all)
+        payload = build_text_payload(text)
         payload.update(
             {
                 "timestamp": str(timestamp),
@@ -105,13 +109,15 @@ async def run_and_notify(
             "MediaCrawler 定时任务异常终止\n"
             f"错误类型：{type(exc).__name__}\n"
             f"耗时：{elapsed}",
-            mention_all=True,
         )
         raise
 
     elapsed = _format_duration(clock() - started)
-    failed = bool(summary.exit_code or summary.failed_tasks or summary.sync.failed)
-    status = "存在错误" if failed else "成功"
+    status = (
+        "存在错误"
+        if summary.exit_code or summary.failed_tasks or summary.sync.failed
+        else "成功"
+    )
     _send_safely(
         notifier,
         f"MediaCrawler 定时任务完成\n"
@@ -122,14 +128,89 @@ async def run_and_notify(
         f"多维表同步成功：{summary.sync.succeeded}\n"
         f"多维表同步失败：{summary.sync.failed}\n"
         f"耗时：{elapsed}",
-        mention_all=failed,
     )
     return summary
 
 
-def _send_safely(notifier: Any, text: str, *, mention_all: bool = False) -> None:
+def format_platform_report(report: PlatformExecutionReport) -> str:
+    platform_label = "小红书" if report.platform is Platform.XHS else "抖音"
+    failed = any(not task.success for task in report.tasks)
+    lines = [
+        f"【{platform_label}任务完成】",
+        f"状态：{'存在失败' if failed else '成功'}",
+        f"平台耗时：{_format_duration(report.elapsed_seconds)}",
+        f"任务数量：{len(report.tasks)}",
+    ]
+    for index, task_report in enumerate(report.tasks, start=1):
+        lines.extend(
+            (
+                "",
+                f"{index}. {_task_label(task_report.task)}",
+                f"状态：{'成功' if task_report.success else '失败'}",
+                f"耗时：{_format_duration(task_report.elapsed_seconds)}",
+                f"内容：{_task_details(task_report.task)}",
+            )
+        )
+        if task_report.error:
+            lines.append(f"错误类型：{task_report.error}")
+        if task_report.changes:
+            lines.append("数据：")
+            lines.extend(
+                f"- {change.label}：新增 {change.created}，"
+                f"更新 {change.updated}，共 {change.total}"
+                for change in task_report.changes
+            )
+        else:
+            lines.append("数据：本任务未产生数据库新增或更新")
+    return "\n".join(lines)
+
+
+def notify_platform_report(notifier: Any, report: PlatformExecutionReport) -> None:
+    _send_safely(notifier, format_platform_report(report))
+
+
+def _task_label(task: Task) -> str:
+    labels = {
+        TaskKind.CREATOR_METRICS: "创作者后台作品指标",
+        TaskKind.CONTENT_DETAIL: "指定作品详情与评论",
+        TaskKind.CREATOR_CONTENT: "指定创作者作品",
+        TaskKind.DOUYIN_TAG_CONTENT: "抖音 Tag 作品与评论",
+        TaskKind.DOUYIN_STATS_COMMENTS: "官号作品评论",
+    }
+    return labels[task.kind]
+
+
+def _task_details(task: Task) -> str:
+    comments = "一级、二级评论" if task.get_comments else "不抓取评论"
+    if task.kind is TaskKind.CREATOR_METRICS:
+        return f"账号 {task.profile.template} 的创作者后台作品指标"
+    if task.kind is TaskKind.DOUYIN_TAG_CONTENT:
+        tags = "、".join(
+            f"{target.tag_name}（{target.tag_id}）" for target in task.tag_targets
+        )
+        cutoff = task.published_after.isoformat() if task.published_after else "不限"
+        return f"Tag {tags}；{cutoff} 之后发布的作品；{comments}"
+    targets = _target_summary(task.targets)
+    if task.kind is TaskKind.DOUYIN_STATS_COMMENTS:
+        cutoff = task.published_after.isoformat() if task.published_after else "不限"
+        return f"作品 {targets}；{cutoff} 之后发布；{comments}"
+    if task.kind is TaskKind.CREATOR_CONTENT:
+        return f"创作者 {targets}；抓取其作品"
+    return f"作品 {targets}；{comments}"
+
+
+def _target_summary(targets: tuple[str, ...]) -> str:
+    if not targets:
+        return "0 个"
+    visible = "、".join(targets[:5])
+    if len(targets) > 5:
+        visible += f" 等 {len(targets)} 个"
+    return visible
+
+
+def _send_safely(notifier: Any, text: str) -> None:
     try:
-        notifier.send(text, mention_all=mention_all)
+        notifier.send(text)
     except Exception as exc:
         logger.warning("Feishu task notification failed: %s", type(exc).__name__)
 

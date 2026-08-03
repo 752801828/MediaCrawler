@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import inspect
+import logging
 import uuid
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
+import time
 from typing import Any
 
 from creator_ops.config import Settings
@@ -11,7 +14,12 @@ from creator_ops.douyin_stats_comments import (
     build_douyin_stats_comment_filter,
     rolling_month_cutoff,
 )
-from creator_ops.domain import Platform, TaskKind
+from creator_ops.domain import (
+    Platform,
+    PlatformExecutionReport,
+    TaskExecutionReport,
+    TaskKind,
+)
 from creator_ops.feishu.client import FeishuClient, FeishuError
 from creator_ops.planner import PlanningError, build_plan
 from creator_ops.platforms import DouyinCreatorCollector, XhsCreatorCollector
@@ -22,6 +30,9 @@ from creator_ops.sync import (
     metric_business_key,
     metric_feishu_payload,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -44,6 +55,7 @@ class CreatorOpsRunner:
         synchronizer: Any | None = None,
         public_task_runner: Any = run_public_task,
         init_db: Any | None = None,
+        platform_reporter: Any | None = None,
     ) -> None:
         self.settings = settings
         self.client = client or FeishuClient(settings.feishu)
@@ -58,6 +70,7 @@ class CreatorOpsRunner:
             self.repository,
         )
         self.public_task_runner = public_task_runner
+        self.platform_reporter = platform_reporter
         if init_db is None:
             from database.db import init_db as upstream_init_db
 
@@ -119,7 +132,16 @@ class CreatorOpsRunner:
         run_id = await self.repository.create_run(str(uuid.uuid4()))
         succeeded = 0
         failed = 0
+        remaining_by_platform: dict[Platform, int] = {}
+        reports_by_platform: dict[Platform, list[TaskExecutionReport]] = {}
         for task in plan:
+            remaining_by_platform[task.platform] = (
+                remaining_by_platform.get(task.platform, 0) + 1
+            )
+        for task in plan:
+            task_started_at = datetime.now()
+            task_started_mono = time.monotonic()
+            task_error = ""
             task_row_id = await self.repository.start_task(run_id, task)
             try:
                 if task.kind is TaskKind.CREATOR_METRICS:
@@ -145,14 +167,59 @@ class CreatorOpsRunner:
                         await self.synchronizer.queue_platform_comments(task.platform)
             except Exception as exc:
                 failed += 1
+                task_error = type(exc).__name__
                 await self.repository.finish_task(
                     task_row_id,
                     success=False,
-                    error=type(exc).__name__,
+                    error=task_error,
                 )
             else:
                 succeeded += 1
                 await self.repository.finish_task(task_row_id, success=True)
+
+            changes = ()
+            counter = getattr(self.repository, "task_change_counts", None)
+            task_finished_at = datetime.now()
+            if counter is not None:
+                try:
+                    changes = await counter(
+                        task,
+                        task_started_at,
+                        task_finished_at,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Task change count failed for %s: %s",
+                        task.task_id,
+                        type(exc).__name__,
+                    )
+            task_report = TaskExecutionReport(
+                task=task,
+                success=not task_error,
+                elapsed_seconds=time.monotonic() - task_started_mono,
+                changes=tuple(changes),
+                error=task_error,
+            )
+            reports_by_platform.setdefault(task.platform, []).append(task_report)
+            remaining_by_platform[task.platform] -= 1
+            if (
+                remaining_by_platform[task.platform] == 0
+                and self.platform_reporter is not None
+            ):
+                report = PlatformExecutionReport(
+                    platform=task.platform,
+                    tasks=tuple(reports_by_platform[task.platform]),
+                )
+                try:
+                    result = self.platform_reporter(report)
+                    if inspect.isawaitable(result):
+                        await result
+                except Exception as exc:
+                    logger.warning(
+                        "Platform report failed for %s: %s",
+                        task.platform.value,
+                        type(exc).__name__,
+                    )
 
         sync_summary = SyncSummary()
         if not collect_only:

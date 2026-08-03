@@ -67,3 +67,33 @@ class TaskResult:
     success: bool
     records: tuple[MetricRecord, ...] = ()
     error: str = ""
+
+
+@dataclass(frozen=True)
+class DataChangeCount:
+    label: str
+    created: int = 0
+    updated: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.created + self.updated
+
+
+@dataclass(frozen=True)
+class TaskExecutionReport:
+    task: Task
+    success: bool
+    elapsed_seconds: float
+    changes: tuple[DataChangeCount, ...] = ()
+    error: str = ""
+
+
+@dataclass(frozen=True)
+class PlatformExecutionReport:
+    platform: Platform
+    tasks: tuple[TaskExecutionReport, ...]
+
+    @property
+    def elapsed_seconds(self) -> float:
+        return sum(task.elapsed_seconds for task in self.tasks)
