@@ -77,7 +77,7 @@ class XhsCreatorCollector:
                 await page.goto(XHS_CREATOR_URL, wait_until="domcontentloaded", timeout=60_000)
                 await page.wait_for_selector(
                     "#pane-note-data table tbody tr",
-                    timeout=30_000,
+                    timeout=600_000,
                 )
                 for _ in range(1000):
                     row_locator = page.locator("#pane-note-data table tbody tr")
